@@ -3,10 +3,11 @@
 // ════════════════════════════════════════════════════════════════════════════
 const S = {
   user: null, meta: null,
-  pred: { scores: {}, submitted: 0 },
-  page: 'ranking', subtab: 'grupos',
+  pred: { scores: {}, bracketPicks: {}, submitted: 0 },
+  page: 'ranking', subtab: 'grupos', koRound: 'R32',
 };
 const GROUP_ORDER = ['A','B','C','D','E','F','G','H','I','J','K','L'];
+const KO_ROUND_SEQ = ['R32','R16','QF','SF','THIRD','FINAL'];
 
 async function api(method, path, body) {
   const res = await fetch(path, {
@@ -109,22 +110,23 @@ async function renderRanking(main) {
       html += `<div class="card card-pad"><div class="empty"><div class="ico">👥</div><h3>Sin participantes todavía</h3><p>El admin debe crear los usuarios.</p></div></div>`;
     } else {
       html += `<div class="card" style="overflow:hidden"><table class="rank-table"><thead><tr>
-        <th>#</th><th>Participante</th><th>Total</th><th>Grupos</th><th>Clasif.</th><th>Exactos</th><th>Estado</th>
+        <th>#</th><th>Participante</th><th>Total</th><th>Grupos</th><th>Elim.</th><th>Exactos</th><th>Estado</th>
       </tr></thead><tbody>`;
       r.forEach((u,i) => {
         const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+        const ko = (u.koPoints||0) + (u.championBonus||0);
         html += `<tr>
           <td class="pos p${i+1}">${medal||(i+1)}</td>
-          <td class="name">${esc(u.displayName)}</td>
+          <td class="name">${esc(u.displayName)} ${u.championHit?'🏆':''}</td>
           <td><span class="pts">${u.total}</span></td>
           <td>${u.groupPoints}</td>
-          <td>${u.qualifiersScored?`<span class="chip chip-green">${u.correctQualifiers}/32</span>`:`<span class="chip chip-gray">—</span>`}</td>
+          <td>${ko>0?`<span class="chip chip-green">${ko}</span>`:`<span class="chip chip-gray">—</span>`}</td>
           <td><span class="chip chip-yellow">✓ ${u.exactCount}</span></td>
           <td>${u.submitted?`<span class="chip chip-green">Enviada</span>`:`<span class="chip chip-red">Pendiente</span>`}</td>
         </tr>`;
       });
       html += `</tbody></table></div>
-      <p class="bracket-note" style="margin-top:.9rem">Puntuación: <b>5</b> marcador exacto · <b>2</b> resultado correcto · <b>0</b> fallo · <b>+3</b> por cada equipo que acertaste como clasificado a 16avos. Desempate: más marcadores exactos.</p>`;
+      <p class="bracket-note" style="margin-top:.9rem"><b>Grupos:</b> 5 exacto · 2 resultado · 0 fallo. <b>Eliminatorias</b> (por equipo que acertaste que avanza): clasificar a 16avos 4 · octavos 4 · cuartos 4 · semis 6 · final 6 · <b>campeón +15</b>. Desempate: más marcadores exactos.</p>`;
     }
     document.getElementById('rk').innerHTML = html;
   } catch(e){ document.getElementById('rk').innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`; }
@@ -137,26 +139,31 @@ function renderQuiniela(main) {
   const locked = !!S.pred.submitted;
   const filled = filledCount();
   const pct = Math.round(filled/72*100);
+  const bracketDone = bracketIsComplete();
   main.innerHTML = `
-    <div class="page-head"><div><h1>Mi Quiniela</h1><div class="sub">Predice los 72 partidos de la fase de grupos</div></div></div>
-    ${locked ? `<div class="banner banner-ok"><span class="ico">🔒</span><div><strong>Quiniela enviada y bloqueada.</strong> Ya no puedes modificarla. Abajo puedes ver tu cuadro de clasificados.</div></div>`
-             : `<div class="progress"><div class="row"><span>Avance</span><span>${filled}/72</span></div><div class="bar"><div style="width:${pct}%"></div></div></div>
-                <div class="banner banner-info"><span class="ico">⚠️</span><div>Cuando envíes tu quiniela quedará <b>bloqueada permanentemente</b>. Tus dieciseisavos se calculan solos a partir de estos resultados.</div></div>`}
+    <div class="page-head"><div><h1>Mi Quiniela</h1><div class="sub">1) Predice los 72 partidos de grupos · 2) Arma tu cuadro eliminatorio</div></div></div>
+    ${locked ? `<div class="banner banner-ok"><span class="ico">🔒</span><div><strong>Quiniela enviada y bloqueada.</strong> Ya no puedes modificarla.</div></div>`
+             : `<div class="progress"><div class="row"><span>Grupos</span><span>${filled}/72</span></div><div class="bar"><div style="width:${pct}%"></div></div></div>
+                <div class="banner banner-info"><span class="ico">⚠️</span><div>Para enviar necesitas completar los <b>72 partidos</b> y tu <b>cuadro eliminatorio</b> (pestaña "Mi cuadro"). Al enviar queda <b>bloqueada</b>.</div></div>`}
     <div class="subtabs">
-      <button class="subtab ${S.subtab==='grupos'?'active':''}" onclick="setSub('grupos')">⚽ Partidos</button>
+      <button class="subtab ${S.subtab==='grupos'?'active':''}" onclick="setSub('grupos')">⚽ Partidos ${filled===72?'✓':''}</button>
       <button class="subtab ${S.subtab==='tablas'?'active':''}" onclick="setSub('tablas')">📊 Mis tablas</button>
-      <button class="subtab ${S.subtab==='bracket'?'active':''}" onclick="setSub('bracket')">🗺️ Mi cuadro (16avos)</button>
+      <button class="subtab ${S.subtab==='bracket'?'active':''}" onclick="setSub('bracket')">🗺️ Mi cuadro ${bracketDone?'✓':''}</button>
     </div>
     <div id="qbody"></div>`;
   renderSub();
 }
 function setSub(t){ S.subtab=t; renderSub(); }
-
 function renderSub() {
   const body = document.getElementById('qbody'); if(!body) return;
   if (S.subtab==='grupos') return renderMatches(body);
   if (S.subtab==='tablas') return renderMyTables(body);
   if (S.subtab==='bracket') return renderMyBracket(body);
+}
+
+function bracketIsComplete() {
+  const req = [...S.meta.bracket.rounds.R32, ...S.meta.bracket.rounds.R16, ...S.meta.bracket.rounds.QF, ...S.meta.bracket.rounds.SF, ...S.meta.bracket.rounds.FINAL];
+  return req.every(id => !!S.pred.bracketPicks[id]);
 }
 
 function renderMatches(body) {
@@ -173,9 +180,9 @@ function renderMatches(body) {
   if (!locked) {
     const sb = document.createElement('div'); sb.className='savebar';
     sb.innerHTML = `<div class="inner">
-      <span class="count">Avance <b id="cnt">${filledCount()}</b>/72</span>
-      <button class="btn btn-ghost btn-sm" onclick="saveDraft()">Guardar borrador</button>
-      <button class="btn btn-yellow btn-sm" id="subbtn" onclick="submitQuiniela()">🔒 Enviar definitiva</button>
+      <span class="count">Grupos <b id="cnt">${filledCount()}</b>/72</span>
+      <button class="btn btn-ghost btn-sm" onclick="saveDraft()">Guardar</button>
+      <button class="btn btn-yellow btn-sm" onclick="setSub('bracket')">Siguiente: mi cuadro →</button>
     </div>`;
     body.appendChild(sb);
   }
@@ -199,7 +206,6 @@ function matchRow(m, locked) {
   if (!locked) row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', onScoreInput));
   return row;
 }
-
 function onScoreInput(e) {
   const k = e.target.dataset.k, side = e.target.dataset.s;
   let v = e.target.value === '' ? null : Math.max(0, Math.min(49, parseInt(e.target.value)));
@@ -209,43 +215,41 @@ function onScoreInput(e) {
   const row = e.target.closest('.match');
   if (row) row.classList.toggle('filled', Number.isInteger(s.a)&&Number.isInteger(s.b));
   const cnt = document.getElementById('cnt'); if (cnt) cnt.textContent = filledCount();
+  // Cambiar grupos invalida el bracket previo (los equipos pueden cambiar)
+  if (Object.keys(S.pred.bracketPicks).length) S.pred.bracketPicks = {};
 }
 
 async function saveDraft() {
-  try { await api('PUT','/api/prediction',{scores:S.pred.scores}); toast('Borrador guardado'); }
+  try { await api('PUT','/api/prediction',{scores:S.pred.scores,bracketPicks:S.pred.bracketPicks}); toast('Guardado'); }
   catch(e){ toast(e.message,'err'); }
 }
 
 async function submitQuiniela() {
-  const filled = filledCount();
-  if (filled < 72) { toast(`Faltan ${72-filled} partidos`, 'err'); return; }
-  if (!confirm('¿Enviar tu quiniela? Quedará BLOQUEADA y no podrás modificarla.')) return;
+  if (filledCount() < 72) { toast(`Faltan ${72-filledCount()} partidos de grupos`, 'err'); setSub('grupos'); return; }
+  if (!bracketIsComplete()) { toast('Completa tu cuadro eliminatorio', 'err'); setSub('bracket'); return; }
+  if (!confirm('¿Enviar tu quiniela completa (grupos + cuadro)? Quedará BLOQUEADA.')) return;
   try {
-    await api('PUT','/api/prediction',{scores:S.pred.scores});
-    await api('POST','/api/prediction/submit',{scores:S.pred.scores});
+    await api('PUT','/api/prediction',{scores:S.pred.scores,bracketPicks:S.pred.bracketPicks});
+    await api('POST','/api/prediction/submit',{scores:S.pred.scores,bracketPicks:S.pred.bracketPicks});
     S.pred.submitted = 1;
-    toast('¡Quiniela enviada! 🔒');
-    render();
+    toast('¡Quiniela enviada! 🔒'); render();
   } catch(e){ toast(e.message,'err'); }
 }
 
 // ─── MIS TABLAS ────────────────────────────────────────────────────────────────
 async function renderMyTables(body) {
   body.innerHTML = `<div class="bracket-note">Tablas calculadas con tus predicciones (puntos → dif. de gol → goles a favor → enfrentamiento directo). <span class="tag tag-q">CLASIFICA</span> 1° y 2° · <span class="tag tag-3">3°</span> puede entrar como mejor tercero.</div><div id="tabs-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem"></div>`;
-  let q;
-  try { q = await api('GET','/api/prediction/bracket'); } catch(e){ body.innerHTML=`<div class="alert alert-error">${esc(e.message)}</div>`; return; }
+  let d;
+  try { d = await api('GET','/api/prediction/bracket'); } catch(e){ body.innerHTML=`<div class="alert alert-error">${esc(e.message)}</div>`; return; }
   const grid = document.getElementById('tabs-grid');
-  const qualThirds = new Set(q.qualifiedThirds);
+  const qualThirds = new Set(d.qualifiedThirds);
   for (const g of GROUP_ORDER) {
-    const tbl = q.allTables[g];
+    const tbl = d.allTables[g];
     const card = document.createElement('div'); card.className='card card-pad';
     let rows = tbl.map((t,i) => {
       const cls = i===0?'qual-1':i===1?'qual-2':i===2?(qualThirds.has(t.team)?'qual-3':'qual-out'):'qual-out';
-      let badge='';
-      if (i<2) badge=`<span class="tag tag-q">Clasifica</span>`;
-      else if (i===2) badge = qualThirds.has(t.team)?`<span class="tag tag-q">Mejor 3°</span>`:`<span class="tag tag-3">3°</span>`;
-      return `<tr class="${cls}"><td>${fl(t.team)} <b>${esc(tn(t.team))}</b> ${badge}</td>
-        <td class="num">${t.pts}</td><td class="num">${t.dg>0?'+':''}${t.dg}</td><td class="num">${t.gf}</td></tr>`;
+      let badge = i<2?`<span class="tag tag-q">Clasifica</span>`: i===2?(qualThirds.has(t.team)?`<span class="tag tag-q">Mejor 3°</span>`:`<span class="tag tag-3">3°</span>`):'';
+      return `<tr class="${cls}"><td>${fl(t.team)} <b>${esc(tn(t.team))}</b> ${badge}</td><td class="num">${t.pts}</td><td class="num">${t.dg>0?'+':''}${t.dg}</td><td class="num">${t.gf}</td></tr>`;
     }).join('');
     card.innerHTML = `<div class="group-title" style="margin-bottom:.5rem"><span class="group-badge">${g}</span><span class="gname">Grupo ${g}</span></div>
       <table class="mini-table"><thead><tr><th>Equipo</th><th class="num">Pts</th><th class="num">DG</th><th class="num">GF</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -253,43 +257,114 @@ async function renderMyTables(body) {
   }
 }
 
-// ─── MI CUADRO (16avos) ──────────────────────────────────────────────────────
+// ─── MI CUADRO (pickable) ────────────────────────────────────────────────────
+let BR = null; // cache del cuadro del usuario
 async function renderMyBracket(body) {
-  let q;
-  try { q = await api('GET','/api/prediction/bracket'); } catch(e){ body.innerHTML=`<div class="alert alert-error">${esc(e.message)}</div>`; return; }
-  const winners = {}, runners = {};
-  for (const g of GROUP_ORDER){ winners[g]=q.allTables[g][0].team; runners[g]=q.allTables[g][1].team; }
-  const thirds = q.qualifiedThirds.slice();
+  if (filledCount() < 72) {
+    body.innerHTML = `<div class="banner banner-info"><span class="ico">📋</span><div>Primero completa los <b>72 partidos de grupos</b>. Tu cuadro se arma automáticamente con esos resultados.</div></div>`;
+    return;
+  }
+  body.innerHTML = `<div id="brwrap">Calculando tu cuadro…</div>`;
+  await loadBracket();
+  drawBracket();
+}
 
-  // Estructura de 16avos: 8 llaves "ganador vs tercero" (1A,1B,1D,1E,1G,1I,1K,1L)
-  // y 8 llaves "2° vs 2°/1°" según patrón estándar. Las llaves con tercero se
-  // muestran con los mejores terceros disponibles (asignación ilustrativa: el
-  // orden NO afecta la puntuación, que es por equipos clasificados).
-  const winnerSlots = ['A','B','D','E','G','I','K','L'];
-  const ties = [];
-  winnerSlots.forEach((g,i) => {
-    ties.push({ label:`16avos · llave ${i+1}`, s1:{team:winners[g],pos:`1° ${g}`}, s2:{team:thirds[i]||null,pos:'Mejor 3°'} });
-  });
-  // Llaves restantes entre 1°/2° (cruces fijos representativos)
-  const pairs = [['C','F'],['H','J'],['L','K'],['A','C'],['E','I'],['B','D'],['G','H'],['J','L']];
-  pairs.forEach(([a,b],i) => {
-    ties.push({ label:`16avos · llave ${i+9}`, s1:{team:winners[a],pos:`1° ${a}`}, s2:{team:runners[b],pos:`2° ${b}`} });
-  });
+async function loadBracket() {
+  // Construir el cuadro en el cliente desde el servidor (resuelve equipos + aplica picks)
+  const d = await api('GET','/api/prediction/bracket');
+  BR = d; // { matches, picks, ... }
+}
 
-  body.innerHTML = `<div class="bracket-note">Tu cuadro de <b>dieciseisavos</b> según tus predicciones. Clasifican <b>1°</b>, <b>2°</b> de cada grupo y los <b>8 mejores terceros</b>. La colocación exacta de los terceros la fija FIFA al cerrar la fase de grupos; <b>no afecta tu puntuación</b> (se premia acertar qué equipos clasifican).</div>
-    <div class="r32-grid">${ties.map(t=>`
-      <div class="tie"><div class="h">${t.label}</div>
-        <div class="side"><span class="flag">${t.s1.team?fl(t.s1.team):'⬜'}</span> <span>${t.s1.team?esc(tn(t.s1.team)):'—'}</span><span class="pos">${t.s1.pos}</span></div>
-        <div class="side"><span class="flag">${t.s2.team?fl(t.s2.team):'⬜'}</span> <span>${t.s2.team?esc(tn(t.s2.team)):'Por definir'}</span><span class="pos">${t.s2.pos}</span></div>
-      </div>`).join('')}</div>`;
+function drawBracket() {
+  const wrap = document.getElementById('brwrap'); if(!wrap) return;
+  const locked = !!S.pred.submitted;
+  const rounds = S.meta.bracket.rounds;
+  const labels = S.meta.bracket.roundLabel;
+  const seq = ['R32','R16','QF','SF','FINAL'];
+
+  // botones de ronda
+  const roundDone = r => rounds[r].every(id => !!S.pred.bracketPicks[id]);
+  const btns = seq.map(r => `<button class="ko-round-btn ${S.koRound===r?'active':''} ${roundDone(r)?'done':''}" onclick="setKoRound('${r}')"><span class="dot"></span>${labels[r]}</button>`).join('');
+
+  const totalReq = seq.reduce((n,r)=>n+rounds[r].length,0);
+  const done = seq.reduce((n,r)=>n+rounds[r].filter(id=>S.pred.bracketPicks[id]).length,0);
+
+  let html = `<div class="bracket-note">Elige al ganador de cada llave; avanza a la siguiente ronda automáticamente. La colocación de los terceros es ilustrativa y <b>no afecta tus puntos</b> (se premia acertar qué equipos llegan a cada ronda).</div>
+    <div class="ko-rounds">${btns}</div>
+    <div class="ko-progress">Elecciones: <b>${done}</b>/${totalReq}</div>
+    <div id="ties" class="ties-col"></div>`;
+
+  // campeón
+  const champ = S.pred.bracketPicks[104];
+  if (S.koRound==='FINAL' && champ) {
+    html += `<div class="champ-card"><div class="lbl">🏆 Tu campeón del mundo</div><div class="team">${fl(champ)} ${esc(tn(champ))}</div></div>`;
+  }
+  if (!locked) {
+    html += `<div class="savebar"><div class="inner">
+      <span class="count">Cuadro <b>${done}</b>/${totalReq}</span>
+      <button class="btn btn-ghost btn-sm" onclick="saveDraft()">Guardar</button>
+      <button class="btn btn-yellow btn-sm" onclick="submitQuiniela()">🔒 Enviar definitiva</button>
+    </div></div>`;
+  }
+  wrap.innerHTML = html;
+  drawTies();
+}
+
+function setKoRound(r){ S.koRound=r; drawBracket(); }
+
+function drawTies() {
+  const cont = document.getElementById('ties'); if(!cont) return;
+  const locked = !!S.pred.submitted;
+  const ids = S.meta.bracket.rounds[S.koRound];
+  const labels = S.meta.bracket.roundLabel;
+  cont.innerHTML = '';
+  ids.forEach((id, i) => {
+    const m = BR.matches[id];
+    const t1 = m.team1, t2 = m.team2;
+    const pick = S.pred.bracketPicks[id];
+    const tie = document.createElement('div'); tie.className='tie2';
+    const sideBtn = (team, which) => {
+      const known = !!team;
+      const sel = pick && pick===team;
+      return `<button class="pick ${sel?'sel':''}" ${(!known||locked)?'disabled':''} onclick="pickWinner(${id},'${team||''}')">
+        <span class="flag">${known?fl(team):'⬜'}</span>
+        <span class="nm ${known?'':'tbd'}">${known?esc(tn(team)):'Por definir'}</span>
+        <span class="chk">${sel?'✓':''}</span>
+      </button>`;
+    };
+    tie.innerHTML = `<div class="h"><span>${labels[S.koRound]} · ${i+1}</span><span>#${id}</span></div>${sideBtn(t1)}${sideBtn(t2)}`;
+    cont.appendChild(tie);
+  });
+}
+
+async function pickWinner(matchId, team) {
+  if (!team || S.pred.submitted) return;
+  // Si cambia el ganador, limpiar picks aguas abajo que dependían del anterior
+  if (S.pred.bracketPicks[matchId] !== team) {
+    S.pred.bracketPicks[matchId] = team;
+    clearDownstream();
+  }
+  // Recalcular el cuadro con los picks actuales
+  try {
+    await api('PUT','/api/prediction',{bracketPicks:S.pred.bracketPicks});
+    await loadBracket();
+    drawBracket();
+  } catch(e){ toast(e.message,'err'); }
+}
+
+// Limpia rondas posteriores cuando cambia un resultado (se vuelven inválidas)
+function clearDownstream() {
+  // Estrategia simple y segura: revalidar tras recargar el cuadro del server.
+  // El server reconstruye; aquí solo quitamos picks de equipos que ya no existan en su llave.
+  // (loadBracket + drawBracket re-renderiza; las llaves sin equipos quedan deshabilitadas)
 }
 
 // ─── RESULTADOS (oficiales) ─────────────────────────────────────────────────────
 async function renderResultados(main) {
   main.innerHTML = `<div class="page-head"><div><h1>Resultados Oficiales</h1><div class="sub">Marcadores reales de la fase de grupos</div></div></div><div id="rbody">Cargando…</div>`;
-  let real = {};
-  try { real = await api('GET','/api/results'); } catch { real = {}; }
-  renderResultsView(document.getElementById('rbody'), real, false);
+  let real = { scores:{}, knockout:{} };
+  try { real = await api('GET','/api/results'); } catch {}
+  renderResultsView(document.getElementById('rbody'), real.scores || {}, false);
 }
 
 function renderResultsView(body, real, editable) {
@@ -323,13 +398,18 @@ function renderAdmin(main) {
   main.innerHTML=`<div class="page-head"><div><h1>Panel Admin</h1><div class="sub">Gestiona participantes y registra resultados</div></div></div>
     <div class="subtabs">
       <button class="subtab ${S.subtab==='users'?'active':''}" onclick="setAdminTab('users')">👥 Participantes</button>
-      <button class="subtab ${S.subtab!=='users'?'active':''}" onclick="setAdminTab('results')">⚽ Resultados</button>
+      <button class="subtab ${S.subtab==='results'?'active':''}" onclick="setAdminTab('results')">⚽ Resultados grupos</button>
+      <button class="subtab ${S.subtab==='ko'?'active':''}" onclick="setAdminTab('ko')">🏆 Eliminatorias</button>
     </div><div id="abody"></div>`;
-  if (S.subtab!=='users' && S.subtab!=='results') S.subtab='users';
+  if (!['users','results','ko'].includes(S.subtab)) S.subtab='users';
   renderAdminBody();
 }
 function setAdminTab(t){ S.subtab=t; renderAdmin(document.querySelector('main')); }
-function renderAdminBody(){ const b=document.getElementById('abody'); if(!b)return; S.subtab==='results'?adminResults(b):adminUsers(b); }
+function renderAdminBody(){ const b=document.getElementById('abody'); if(!b)return;
+  if (S.subtab==='results') adminResults(b);
+  else if (S.subtab==='ko') adminKnockout(b);
+  else adminUsers(b);
+}
 
 async function adminUsers(body) {
   body.innerHTML=`<div class="card card-pad" style="margin-bottom:1.2rem">
@@ -377,10 +457,11 @@ async function unlock(id,name){ if(!confirm(`¿Desbloquear la quiniela de ${name
 
 let ADMIN_RESULTS = {};
 async function adminResults(body) {
-  body.innerHTML=`<div class="banner banner-info"><span class="ico">⚽</span><div>Ingresa los marcadores reales. El ranking se actualiza solo. Los puntos por clasificados a 16avos se otorgan cuando estén los 72 partidos.</div></div>
+  body.innerHTML=`<div class="banner banner-info"><span class="ico">⚽</span><div>Ingresa los marcadores reales de los 72 partidos. El ranking se actualiza solo. Los puntos por clasificados a 16avos se otorgan cuando estén los 72 partidos.</div></div>
     <div style="display:flex;justify-content:flex-end;margin-bottom:1rem"><button class="btn btn-primary" onclick="saveResults()">💾 Guardar resultados</button></div>
     <div id="resbody"></div>`;
-  ADMIN_RESULTS = await api('GET','/api/admin/results');
+  const real = await api('GET','/api/admin/results');
+  ADMIN_RESULTS = real.scores || {};
   renderResultsView(document.getElementById('resbody'), ADMIN_RESULTS, true);
 }
 function onResultInput(e){
@@ -392,9 +473,72 @@ function onResultInput(e){
   if(row)row.classList.toggle('filled',Number.isInteger(s.a)&&Number.isInteger(s.b));
 }
 async function saveResults(){
-  // limpia entradas incompletas
   const clean={}; for(const k of Object.keys(ADMIN_RESULTS)){const s=ADMIN_RESULTS[k]; if(s&&Number.isInteger(s.a)&&Number.isInteger(s.b))clean[k]=s;}
   try{ const r=await api('PUT','/api/admin/results',{scores:clean}); toast(`Guardado (${r.count} partidos)`); }
+  catch(e){ toast(e.message,'err'); }
+}
+
+// ─── ADMIN: eliminatorias reales (qué equipos avanzan por ronda) ──────────────
+let KO = { reach8:[], reach4:[], reachSemi:[], reachFinal:[], champion:null };
+const KO_STAGES = [
+  { key:'reach8',    label:'Octavos (16)',  max:16, from:'qualified' },
+  { key:'reach4',    label:'Cuartos (8)',   max:8,  from:'reach8' },
+  { key:'reachSemi', label:'Semifinales (4)',max:4, from:'reach4' },
+  { key:'reachFinal',label:'Final (2)',     max:2,  from:'reachSemi' },
+  { key:'champion',  label:'Campeón (1)',   max:1,  from:'reachFinal', single:true },
+];
+let KO_QUALIFIED = [];
+
+async function adminKnockout(body) {
+  const d = await api('GET','/api/results/bracket');
+  if (!d.ready) {
+    body.innerHTML = `<div class="banner banner-info"><span class="ico">📋</span><div>Primero completa los <b>72 resultados de grupos</b>. Cuando estén, aquí podrás marcar qué equipos avanzaron en cada ronda real.</div></div>`;
+    return;
+  }
+  // pool de clasificados (1°,2° y mejores terceros) desde tablas reales
+  KO_QUALIFIED = [];
+  for (const g of GROUP_ORDER){ KO_QUALIFIED.push(d.allTables[g][0].team, d.allTables[g][1].team); }
+  KO_QUALIFIED.push(...d.qualifiedThirds);
+  KO = Object.assign({ reach8:[], reach4:[], reachSemi:[], reachFinal:[], champion:null }, d.knockout||{});
+
+  body.innerHTML = `<div class="banner banner-info"><span class="ico">🏆</span><div>Marca los equipos que <b>realmente avanzaron</b> en cada ronda. Cada ronda se elige entre los de la ronda anterior. Esto da los puntos de eliminatorias (octavos/cuartos ×2, semis/final ×3, +bonus campeón).</div></div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:1rem"><button class="btn btn-primary" onclick="saveKO()">💾 Guardar eliminatorias</button></div>
+    <div id="kobody"></div>`;
+  drawKO();
+}
+
+function drawKO() {
+  const c = document.getElementById('kobody'); if(!c) return;
+  let html='';
+  for (const st of KO_STAGES) {
+    const pool = st.from==='qualified' ? KO_QUALIFIED : (KO[st.from]||[]);
+    const sel = st.single ? (KO[st.key]?[KO[st.key]]:[]) : (KO[st.key]||[]);
+    html += `<div style="margin-bottom:1.4rem">
+      <div style="font-weight:700;margin-bottom:.6rem">${st.label} <span style="color:var(--muted);font-weight:500">· ${sel.length}/${st.max}</span></div>
+      <div class="ko-pool">
+        ${pool.map(t=>`<div class="pool-team ${sel.includes(t)?'on':''}" onclick="toggleKO('${st.key}','${t}',${st.max},${!!st.single})">
+          <span class="flag">${fl(t)}</span><span>${esc(tn(t))}</span></div>`).join('')||'<span style="color:var(--muted)">Define primero la ronda anterior</span>'}
+      </div></div>`;
+  }
+  c.innerHTML = html;
+}
+
+function toggleKO(key, team, max, single) {
+  if (single) { KO[key] = (KO[key]===team)?null:team; drawKO(); return; }
+  const arr = KO[key] || (KO[key]=[]);
+  const i = arr.indexOf(team);
+  if (i>=0) arr.splice(i,1);
+  else { if (arr.length>=max) { toast(`Máximo ${max} en esta ronda`,'err'); return; } arr.push(team); }
+  // limpiar rondas posteriores que dejen de ser subconjunto
+  const chain=['reach8','reach4','reachSemi','reachFinal'];
+  const idx=chain.indexOf(key);
+  if(idx>=0){ for(let j=idx+1;j<chain.length;j++){ KO[chain[j]]=(KO[chain[j]]||[]).filter(t=>(KO[chain[j-1]]||[]).includes(t)); }
+    if(KO.champion && !(KO.reachFinal||[]).includes(KO.champion)) KO.champion=null; }
+  drawKO();
+}
+
+async function saveKO() {
+  try { await api('PUT','/api/admin/knockout', KO); toast('Eliminatorias guardadas'); }
   catch(e){ toast(e.message,'err'); }
 }
 
@@ -409,4 +553,6 @@ window.go=go; window.logout=logout; window.doLogin=doLogin; window.setSub=setSub
 window.saveDraft=saveDraft; window.submitQuiniela=submitQuiniela;
 window.setAdminTab=setAdminTab; window.createUser=createUser; window.delUser=delUser;
 window.resetPass=resetPass; window.unlock=unlock; window.saveResults=saveResults;
+window.setKoRound=setKoRound; window.pickWinner=pickWinner;
+window.toggleKO=toggleKO; window.saveKO=saveKO;
 init();

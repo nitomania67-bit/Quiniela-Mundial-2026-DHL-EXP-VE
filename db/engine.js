@@ -3,6 +3,7 @@
 // Esta es la lógica de la que depende el dinero. Determinista y testeada.
 // ─────────────────────────────────────────────────────────────────────────────
 const { GROUPS } = require('./tournament');
+const bracket = require('./bracket');
 
 // Orden fijo de los grupos para desempates totalmente deterministas (último criterio).
 const GROUP_ORDER = ['A','B','C','D','E','F','G','H','I','J','K','L'];
@@ -99,6 +100,14 @@ function computeQualifiers(scores) {
   return { allTables, thirdsRanking: thirds, qualifiedThirds, qualifiers };
 }
 
+// Devuelve { winners:{A:team}, runners:{A:team}, qualifiedThirds:[...] } desde scores.
+function standingsFrom(scores) {
+  const q = computeQualifiers(scores);
+  const winners = {}, runners = {};
+  for (const g of GROUP_ORDER) { winners[g] = q.allTables[g][0].team; runners[g] = q.allTables[g][1].team; }
+  return { winners, runners, qualifiedThirds: q.qualifiedThirds, allTables: q.allTables };
+}
+
 // ── Puntuación de un partido (5/2/0) ──────────────────────────────────────────
 function scoreMatch(pred, real) {
   if (!pred || pred.a == null || pred.b == null) return 0;
@@ -112,45 +121,81 @@ function scoreMatch(pred, real) {
   return 0;
 }
 
+// ── Puntuación de eliminatorias (por equipos que avanzan a cada ronda) ────────
+// Multiplicadores: 16avos/8avos/4tos ×2, semis/final ×3 (base 2 por equipo).
+// + bonus por campeón. Editable aquí.
+const KO_POINTS = {
+  qualify16: 4,   // clasifica a 16avos (32 equipos)  base2 ×2
+  reach8:    4,   // llega a octavos    (16)          base2 ×2
+  reach4:    4,   // llega a cuartos    (8)           base2 ×2
+  reachSemi: 6,   // llega a semifinales(4)           base2 ×3
+  reachFinal:6,   // llega a final      (2)           base2 ×3
+};
+const CHAMPION_BONUS = 15;
+
+function setIntersectCount(predArr, realSet) {
+  let n = 0; const seen = new Set();
+  for (const t of predArr) { if (t && !seen.has(t) && realSet.has(t)) { n++; seen.add(t); } }
+  return n;
+}
+
 // ── Puntuación total de un participante ───────────────────────────────────────
-// predScores / realScores: { "T1-T2": {a,b} }
-// QUALIFIER_POINTS: puntos por cada equipo correctamente predicho como clasificado a 16avos.
-const QUALIFIER_POINTS = 3;
+// pred: { scores:{...}, bracketPicks:{...} }
+// real: { scores:{...}, knockout:{reach8,reach4,reachSemi,reachFinal,champion} }
+function scoreUser(pred, real) {
+  const predScores = pred.scores || {};
+  const realScores = real.scores || {};
+  const realKO = real.knockout || {};
 
-function scoreUser(predScores, realScores) {
-  let groupPoints = 0, exactCount = 0, correctResultCount = 0;
-  let playedMatches = 0;
-
+  let groupPoints = 0, exactCount = 0, correctResultCount = 0, playedMatches = 0;
   for (const key of Object.keys(realScores)) {
-    const real = realScores[key];
-    if (!real || real.a == null || real.b == null) continue;
+    const r = realScores[key];
+    if (!r || r.a == null || r.b == null) continue;
     playedMatches++;
-    const pts = scoreMatch(predScores[key], real);
+    const pts = scoreMatch(predScores[key], r);
     groupPoints += pts;
     if (pts === 5) exactCount++;
     else if (pts === 2) correctResultCount++;
   }
 
-  // Puntos por clasificados a 16avos (solo si la fase de grupos real está completa)
-  let qualifierPoints = 0, correctQualifiers = 0, qualifiersScored = false;
+  // ── Eliminatorias ──
+  let koPoints = 0, championBonus = 0, correctQualifiers = 0;
+  const detail = { reach8: 0, reach4: 0, reachSemi: 0, reachFinal: 0 };
   const realComplete = isGroupStageComplete(realScores);
+
+  // 16avos (clasificados): se otorgan cuando la fase de grupos real está completa
+  let qualifiersScored = false;
   if (realComplete && Object.keys(predScores).length > 0) {
     qualifiersScored = true;
     const realQ = new Set(computeQualifiers(realScores).qualifiers.map(q => q.team));
-    const predQ = new Set(computeQualifiers(predScores).qualifiers.map(q => q.team));
-    for (const t of predQ) {
-      if (realQ.has(t)) { correctQualifiers++; qualifierPoints += QUALIFIER_POINTS; }
-    }
+    const predQ = computeQualifiers(predScores).qualifiers.map(q => q.team);
+    correctQualifiers = setIntersectCount(predQ, realQ);
+    koPoints += correctQualifiers * KO_POINTS.qualify16;
+  }
+
+  // Rondas posteriores: requieren picks del usuario y el conjunto real de cada ronda.
+  const picks = pred.bracketPicks || {};
+  const userSets = bracket.deriveSets(picks);
+  function roundScore(predArr, realArr, perTeam) {
+    if (!Array.isArray(realArr) || realArr.length === 0) return 0;
+    const rset = new Set(realArr);
+    return setIntersectCount(predArr, rset) * perTeam;
+  }
+  detail.reach8    = roundScore(userSets.reach8,    realKO.reach8,    KO_POINTS.reach8);
+  detail.reach4    = roundScore(userSets.reach4,    realKO.reach4,    KO_POINTS.reach4);
+  detail.reachSemi = roundScore(userSets.reachSemi, realKO.reachSemi, KO_POINTS.reachSemi);
+  detail.reachFinal= roundScore(userSets.reachFinal,realKO.reachFinal,KO_POINTS.reachFinal);
+  koPoints += detail.reach8 + detail.reach4 + detail.reachSemi + detail.reachFinal;
+
+  if (realKO.champion && userSets.champion && userSets.champion === realKO.champion) {
+    championBonus = CHAMPION_BONUS;
   }
 
   return {
-    total: groupPoints + qualifierPoints,
-    groupPoints,
-    qualifierPoints,
-    exactCount,
-    correctResultCount,
-    correctQualifiers,
-    qualifiersScored,
+    total: groupPoints + koPoints + championBonus,
+    groupPoints, koPoints, championBonus,
+    exactCount, correctResultCount, correctQualifiers, qualifiersScored,
+    koDetail: detail, championHit: championBonus > 0,
     playedMatches,
   };
 }
@@ -168,9 +213,11 @@ function isGroupStageComplete(scores) {
 module.exports = {
   computeGroupTable,
   computeQualifiers,
+  standingsFrom,
   scoreMatch,
   scoreUser,
   isGroupStageComplete,
-  QUALIFIER_POINTS,
+  KO_POINTS,
+  CHAMPION_BONUS,
   GROUP_ORDER,
 };

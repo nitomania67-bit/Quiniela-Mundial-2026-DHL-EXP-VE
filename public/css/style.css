@@ -187,7 +187,39 @@ input[type=text]:focus,input[type=password]:focus{outline:none;border-color:var(
 .tie .side .flag{font-size:1.1rem}
 .tie .side .pos{font:inherit;width:auto;font-size:.68rem;color:var(--muted);font-weight:700;margin-left:auto}
 
-/* ── ADMIN ── */
+/* ── BRACKET (pickable) ── */
+.ko-rounds{display:flex;gap:6px;margin-bottom:1.1rem;flex-wrap:wrap}
+.ko-round-btn{background:var(--bg-panel);border:1.5px solid var(--line-strong);border-radius:20px;padding:6px 14px;font-weight:700;font-size:.8rem;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:6px}
+.ko-round-btn.active{background:var(--dhl-red);color:#fff;border-color:var(--dhl-red)}
+.ko-round-btn.done{border-color:var(--pitch)}
+.ko-round-btn .dot{width:7px;height:7px;border-radius:50%;background:var(--line-strong)}
+.ko-round-btn.done .dot{background:var(--pitch)}
+.ko-round-btn.active .dot{background:#fff}
+.ties-col{display:grid;gap:10px;max-width:540px;margin:0 auto}
+.tie2{background:var(--bg-panel);border:1px solid var(--line);border-radius:var(--radius-sm);overflow:hidden;box-shadow:var(--shadow-sm)}
+.tie2 .h{background:var(--ink);color:var(--dhl-yellow);font-weight:700;font-size:.66rem;letter-spacing:.5px;padding:4px 12px;text-transform:uppercase;display:flex;justify-content:space-between}
+.pick{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;transition:.12s;border:none;background:none;width:100%;text-align:left;font:inherit}
+.pick + .pick{border-top:1px solid var(--line)}
+.pick:hover:not(:disabled){background:#FFFBEB}
+.pick:disabled{cursor:default;color:var(--muted)}
+.pick .flag{font-size:1.25rem}
+.pick .nm{font-weight:600;font-size:.95rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick.sel{background:#E6F4EC}
+.pick.sel .nm{font-weight:800;color:var(--pitch-dark)}
+.pick .chk{width:22px;height:22px;border-radius:50%;border:2px solid var(--line-strong);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:.8rem}
+.pick.sel .chk{background:var(--pitch);border-color:var(--pitch);color:#fff}
+.tbd{color:var(--muted);font-style:italic;font-weight:500}
+.champ-card{background:linear-gradient(135deg,var(--dhl-yellow),var(--dhl-yellow-dark));border-radius:var(--radius);padding:1.4rem;text-align:center;margin-top:1rem}
+.champ-card .lbl{font-weight:800;text-transform:uppercase;letter-spacing:1px;font-size:.7rem;color:var(--dhl-red)}
+.champ-card .team{font-family:var(--display);font-size:1.6rem;font-style:italic;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:10px}
+.ko-progress{font-size:.82rem;color:var(--muted);text-align:center;margin-bottom:1rem}
+
+/* admin knockout select */
+.ko-pool{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:7px;margin-bottom:1.2rem}
+.pool-team{display:flex;align-items:center;gap:7px;padding:8px 10px;border:1.5px solid var(--line-strong);border-radius:8px;cursor:pointer;font-size:.85rem;font-weight:600;background:var(--bg-panel);transition:.12s}
+.pool-team:hover{border-color:var(--dhl-red)}
+.pool-team.on{background:var(--pitch);color:#fff;border-color:var(--pitch)}
+.pool-team .flag{font-size:1.05rem}
 .form-grid{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end}
 .users-table{width:100%;border-collapse:collapse}
 .users-table th{text-align:left;padding:9px 12px;font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line)}

@@ -19,21 +19,29 @@ function initDB() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
-    -- Predicción de fase de grupos: un JSON con todos los marcadores del usuario.
+    -- Predicción de fase de grupos + cuadro eliminatorio del usuario.
     CREATE TABLE IF NOT EXISTS predictions (
       user_id INTEGER PRIMARY KEY,
       scores_json TEXT NOT NULL,       -- { "T1-T2": {a,b}, ... }
+      bracket_json TEXT DEFAULT '{}',  -- { matchId: equipoGanador, ... }
       submitted INTEGER DEFAULT 0,     -- 1 = enviada y bloqueada
       submitted_at TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
-    -- Resultados reales (los ingresa el admin). Un solo registro JSON.
+    -- Resultados reales (los ingresa el admin).
     CREATE TABLE IF NOT EXISTS results (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      scores_json TEXT NOT NULL
+      scores_json TEXT NOT NULL,
+      knockout_json TEXT DEFAULT '{}'  -- {reach8:[],reach4:[],reachSemi:[],reachFinal:[],champion}
     );
   `);
+
+  // Migración suave por si la tabla existía sin las columnas nuevas
+  try { db.prepare('SELECT bracket_json FROM predictions LIMIT 1').get(); }
+  catch { db.exec("ALTER TABLE predictions ADD COLUMN bracket_json TEXT DEFAULT '{}'"); }
+  try { db.prepare('SELECT knockout_json FROM results LIMIT 1').get(); }
+  catch { db.exec("ALTER TABLE results ADD COLUMN knockout_json TEXT DEFAULT '{}'"); }
 
   const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
@@ -49,17 +57,29 @@ function initDB() {
 }
 
 function getResults() {
-  const row = db.prepare('SELECT scores_json FROM results WHERE id = 1').get();
-  return row ? JSON.parse(row.scores_json) : {};
+  const row = db.prepare('SELECT scores_json, knockout_json FROM results WHERE id = 1').get();
+  if (!row) return { scores: {}, knockout: {} };
+  return {
+    scores: JSON.parse(row.scores_json || '{}'),
+    knockout: JSON.parse(row.knockout_json || '{}'),
+  };
 }
-function setResults(obj) {
+function setResultScores(obj) {
   db.prepare('UPDATE results SET scores_json = ? WHERE id = 1').run(JSON.stringify(obj));
+}
+function setResultKnockout(obj) {
+  db.prepare('UPDATE results SET knockout_json = ? WHERE id = 1').run(JSON.stringify(obj));
 }
 
 function getPrediction(userId) {
-  const row = db.prepare('SELECT scores_json, submitted, submitted_at FROM predictions WHERE user_id = ?').get(userId);
-  if (!row) return { scores: {}, submitted: 0, submitted_at: null };
-  return { scores: JSON.parse(row.scores_json), submitted: row.submitted, submitted_at: row.submitted_at };
+  const row = db.prepare('SELECT scores_json, bracket_json, submitted, submitted_at FROM predictions WHERE user_id = ?').get(userId);
+  if (!row) return { scores: {}, bracketPicks: {}, submitted: 0, submitted_at: null };
+  return {
+    scores: JSON.parse(row.scores_json || '{}'),
+    bracketPicks: JSON.parse(row.bracket_json || '{}'),
+    submitted: row.submitted,
+    submitted_at: row.submitted_at,
+  };
 }
 
-module.exports = { db, initDB, getResults, setResults, getPrediction };
+module.exports = { db, initDB, getResults, setResultScores, setResultKnockout, getPrediction };
