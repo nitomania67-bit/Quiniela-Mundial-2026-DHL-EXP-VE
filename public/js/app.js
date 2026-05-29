@@ -1,680 +1,412 @@
-// ─── STATE ────────────────────────────────────────────────────────────────────
-const state = {
-  user: null,
-  matches: [],
-  myPredictions: {},
-  currentPage: 'ranking',
-  adminTab: 'users',
+// ════════════════════════════════════════════════════════════════════════════
+// QUINIELA DHL · MUNDIAL 2026 — Frontend SPA
+// ════════════════════════════════════════════════════════════════════════════
+const S = {
+  user: null, meta: null,
+  pred: { scores: {}, submitted: 0 },
+  page: 'ranking', subtab: 'grupos',
 };
+const GROUP_ORDER = ['A','B','C','D','E','F','G','H','I','J','K','L'];
 
-// ─── API HELPER ──────────────────────────────────────────────────────────────
 async function api(method, path, body) {
   const res = await fetch(path, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    method, headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Error del servidor');
   return data;
 }
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const tn = code => S.meta.teams[code]?.name || code;
+const fl = code => S.meta.teams[code]?.flag || '🏴';
 
-// ─── INIT ────────────────────────────────────────────────────────────────────
+// ─── INIT ─────────────────────────────────────────────────────────────────────
 async function init() {
-  try {
-    state.user = await api('GET', '/api/me');
-  } catch (e) { state.user = null; }
-
-  if (!state.user) { renderLogin(); return; }
-  await loadMatches();
-  if (!state.user.isAdmin) await loadMyPredictions();
-  renderApp();
+  S.meta = await api('GET', '/api/meta');
+  try { S.user = await api('GET', '/api/me'); } catch { S.user = null; }
+  if (!S.user) return renderLogin();
+  if (!S.user.isAdmin) S.pred = await api('GET', '/api/prediction');
+  S.page = 'ranking';
+  render();
 }
 
-async function loadMatches() {
-  state.matches = await api('GET', '/api/matches');
-}
+function go(page) { S.page = page; render(); }
 
-async function loadMyPredictions() {
-  const preds = await api('GET', '/api/predictions/mine');
-  state.myPredictions = {};
-  for (const p of preds) state.myPredictions[p.match_id] = p;
-}
-
-// ─── ROUTER ──────────────────────────────────────────────────────────────────
-function navigate(page) {
-  state.currentPage = page;
-  renderApp();
-}
-
-// ─── RENDER ROOT ─────────────────────────────────────────────────────────────
-function renderApp() {
+// ─── SHELL ──────────────────────────────────────────────────────────────────
+function render() {
   const app = document.getElementById('app');
   app.innerHTML = '';
-
-  const nav = buildNav();
-  app.appendChild(nav);
-
+  app.appendChild(nav());
   const main = document.createElement('main');
   app.appendChild(main);
-
-  switch (state.currentPage) {
-    case 'ranking': renderRanking(main); break;
-    case 'quiniela': renderQuiniela(main); break;
-    case 'resultados': renderResultados(main); break;
-    case 'admin': renderAdmin(main); break;
-    default: renderRanking(main);
-  }
+  ({ ranking: renderRanking, quiniela: renderQuiniela, resultados: renderResultados, admin: renderAdmin }[S.page] || renderRanking)(main);
 }
 
-// ─── NAV ─────────────────────────────────────────────────────────────────────
-function buildNav() {
-  const nav = document.createElement('nav');
-  nav.innerHTML = `
-    <div class="nav-logo">⚽ <span>MUNDIAL</span> 2026</div>
+function nav() {
+  const n = document.createElement('div');
+  const link = (id, label) => `<button class="nav-link ${S.page===id?'active':''}" onclick="go('${id}')">${label}</button>`;
+  n.innerHTML = `
+  <div class="dhl-stripe"></div>
+  <nav><div class="nav-inner">
+    <div class="brand"><span class="brand-logo">DHL</span><span class="brand-sub">Quiniela Mundial 2026</span></div>
     <div class="nav-links">
-      <button class="nav-link ${state.currentPage==='ranking'?'active':''}" onclick="navigate('ranking')">🏆 Ranking</button>
-      ${!state.user.isAdmin ? `<button class="nav-link ${state.currentPage==='quiniela'?'active':''}" onclick="navigate('quiniela')">📋 Mi Quiniela</button>` : ''}
-      <button class="nav-link ${state.currentPage==='resultados'?'active':''}" onclick="navigate('resultados')">⚽ Resultados</button>
-      ${state.user.isAdmin ? `<button class="nav-link ${state.currentPage==='admin'?'active':''}" onclick="navigate('admin')">⚙️ Admin</button>` : ''}
+      ${link('ranking','🏆 Ranking')}
+      ${!S.user.isAdmin ? link('quiniela','📋 Mi Quiniela') : ''}
+      ${link('resultados','⚽ Resultados')}
+      ${S.user.isAdmin ? link('admin','⚙️ Admin') : ''}
     </div>
     <div class="nav-right">
-      <span class="nav-user">👤 ${escHtml(state.user.displayName)}</span>
+      <span class="nav-user">${esc(S.user.displayName)}</span>
       <button class="btn-logout" onclick="logout()">Salir</button>
     </div>
-  `;
-  return nav;
+  </div></nav>`;
+  return n;
 }
+async function logout(){ await api('POST','/api/logout'); S.user=null; renderLogin(); }
 
-async function logout() {
-  await api('POST', '/api/logout');
-  state.user = null;
-  renderLogin();
-}
-
-// ─── LOGIN ───────────────────────────────────────────────────────────────────
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
 function renderLogin() {
   document.getElementById('app').innerHTML = `
-    <div class="login-wrap">
-      <div class="login-card">
-        <div class="login-title">QUINIELA<br><span>MUNDIAL 2026</span></div>
-        <p class="login-subtitle">⚽ Ingresa con tu usuario y contraseña</p>
-        <div id="login-error"></div>
-        <div class="form-group">
-          <label>Usuario</label>
-          <input type="text" id="login-user" placeholder="tu_usuario" />
-        </div>
-        <div class="form-group">
-          <label>Contraseña</label>
-          <input type="password" id="login-pass" placeholder="••••••••" />
-        </div>
-        <button class="btn btn-primary btn-full" onclick="doLogin()">Entrar</button>
-      </div>
+  <div class="login-wrap"><div class="login-card">
+    <div class="login-head">
+      <div class="kicker">DHL Express · Mundial 2026</div>
+      <h1>QUINIELA</h1>
     </div>
-  `;
-  document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    <div class="login-body">
+      <div id="lerr"></div>
+      <div class="field"><label>Usuario</label><input type="text" id="lu" autocomplete="username" placeholder="tu usuario"></div>
+      <div class="field"><label>Contraseña</label><input type="password" id="lp" autocomplete="current-password" placeholder="••••••••"></div>
+      <button class="btn btn-primary btn-full" onclick="doLogin()">Ingresar</button>
+    </div>
+  </div></div>`;
+  const p = document.getElementById('lp');
+  p.addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
 }
-
 async function doLogin() {
-  const username = document.getElementById('login-user').value.trim();
-  const password = document.getElementById('login-pass').value;
-  const errEl = document.getElementById('login-error');
+  const username = document.getElementById('lu').value;
+  const password = document.getElementById('lp').value;
   try {
-    state.user = await api('POST', '/api/login', { username, password });
-    await loadMatches();
-    if (!state.user.isAdmin) await loadMyPredictions();
-    renderApp();
-  } catch (e) {
-    errEl.innerHTML = `<div class="alert alert-error">${escHtml(e.message)}</div>`;
-  }
+    S.user = await api('POST','/api/login',{username,password});
+    if (!S.user.isAdmin) S.pred = await api('GET','/api/prediction');
+    S.page='ranking'; render();
+  } catch(e){ document.getElementById('lerr').innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`; }
 }
 
-// ─── RANKING ─────────────────────────────────────────────────────────────────
-async function renderRanking(container) {
-  container.innerHTML = `
-    <div class="page-header">
-      <h1>🏆 Tabla de Posiciones</h1>
-      <p>Actualizada en tiempo real según los resultados del Mundial</p>
-    </div>
-    <div id="ranking-content"><p style="color:var(--text-muted)">Cargando...</p></div>
-  `;
-
+// ─── RANKING ──────────────────────────────────────────────────────────────────
+async function renderRanking(main) {
+  main.innerHTML = `<div class="page-head"><div><h1>Tabla de Posiciones</h1><div class="sub">Se actualiza con cada resultado que registra el admin</div></div></div><div id="rk">Cargando…</div>`;
   try {
-    const ranking = await api('GET', '/api/ranking');
-    const played = ranking[0]?.played || 0;
-    const totalMatches = state.matches.length;
-
-    let html = `
-      <div class="stats-row">
-        <div class="stat-card"><div class="stat-label">Participantes</div><div class="stat-value">${ranking.length}</div></div>
-        <div class="stat-card"><div class="stat-label">Partidos jugados</div><div class="stat-value">${played}</div></div>
-        <div class="stat-card"><div class="stat-label">Total partidos</div><div class="stat-value">${totalMatches}</div></div>
-      </div>
-    `;
-
-    if (ranking.length === 0) {
-      html += `<div class="empty-state"><div class="icon">👥</div><h3>Sin participantes aún</h3><p>El admin debe crear usuarios primero.</p></div>`;
+    const d = await api('GET','/api/ranking');
+    const r = d.ranking;
+    let html = `<div class="stats">
+      <div class="stat accent"><div class="lbl">Participantes</div><div class="val">${r.length}</div></div>
+      <div class="stat"><div class="lbl">Partidos jugados</div><div class="val">${d.playedMatches}<span style="font-size:1rem;color:var(--muted)">/${d.totalMatches}</span></div></div>
+      <div class="stat"><div class="lbl">Líder</div><div class="val" style="font-size:1.2rem">${r[0]?esc(r[0].displayName):'—'}</div></div>
+      <div class="stat"><div class="lbl">Fase grupos</div><div class="val" style="font-size:1.1rem">${d.groupStageComplete?'Completa':'En curso'}</div></div>
+    </div>`;
+    if (!r.length) {
+      html += `<div class="card card-pad"><div class="empty"><div class="ico">👥</div><h3>Sin participantes todavía</h3><p>El admin debe crear los usuarios.</p></div></div>`;
     } else {
-      html += `<div class="card" style="padding: 0; overflow: hidden;">
-        <table class="ranking-table">
-          <thead><tr>
-            <th style="width:48px">#</th>
-            <th>Participante</th>
-            <th>Puntos</th>
-            <th>Exactos</th>
-            <th>Ganador</th>
-            <th>Quiniela</th>
-          </tr></thead>
-          <tbody>`;
-
-      ranking.forEach((r, i) => {
-        const pos = i + 1;
-        const posClass = pos === 1 ? 'rank-1' : pos === 2 ? 'rank-2' : pos === 3 ? 'rank-3' : '';
-        const totalM = state.matches.length;
-        const complete = r.total >= totalM;
+      html += `<div class="card" style="overflow:hidden"><table class="rank-table"><thead><tr>
+        <th>#</th><th>Participante</th><th>Total</th><th>Grupos</th><th>Clasif.</th><th>Exactos</th><th>Estado</th>
+      </tr></thead><tbody>`;
+      r.forEach((u,i) => {
+        const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
         html += `<tr>
-          <td class="rank-pos ${posClass}">${pos}</td>
-          <td class="rank-name">${escHtml(r.displayName)}</td>
-          <td><span class="pts-big">${r.points}</span></td>
-          <td><span class="badge badge-green">✓ ${r.exact}</span></td>
-          <td><span class="badge badge-gold">~ ${r.winner}</span></td>
-          <td>${complete ? `<span class="badge badge-green">Completa</span>` : `<span class="badge badge-muted">${r.total}/${totalM}</span>`}</td>
+          <td class="pos p${i+1}">${medal||(i+1)}</td>
+          <td class="name">${esc(u.displayName)}</td>
+          <td><span class="pts">${u.total}</span></td>
+          <td>${u.groupPoints}</td>
+          <td>${u.qualifiersScored?`<span class="chip chip-green">${u.correctQualifiers}/32</span>`:`<span class="chip chip-gray">—</span>`}</td>
+          <td><span class="chip chip-yellow">✓ ${u.exactCount}</span></td>
+          <td>${u.submitted?`<span class="chip chip-green">Enviada</span>`:`<span class="chip chip-red">Pendiente</span>`}</td>
         </tr>`;
       });
-
-      html += `</tbody></table></div>`;
+      html += `</tbody></table></div>
+      <p class="bracket-note" style="margin-top:.9rem">Puntuación: <b>5</b> marcador exacto · <b>2</b> resultado correcto · <b>0</b> fallo · <b>+3</b> por cada equipo que acertaste como clasificado a 16avos. Desempate: más marcadores exactos.</p>`;
     }
-
-    document.getElementById('ranking-content').innerHTML = html;
-  } catch (e) {
-    document.getElementById('ranking-content').innerHTML = `<div class="alert alert-error">Error: ${escHtml(e.message)}</div>`;
-  }
+    document.getElementById('rk').innerHTML = html;
+  } catch(e){ document.getElementById('rk').innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`; }
 }
 
-// ─── MI QUINIELA ─────────────────────────────────────────────────────────────
-async function renderQuiniela(container) {
-  const totalMatches = state.matches.length;
-  const filledCount = Object.keys(state.myPredictions).length;
-  const isComplete = filledCount >= totalMatches;
+// ─── MI QUINIELA ───────────────────────────────────────────────────────────────
+function filledCount(){ return S.meta.matches.filter(m=>{const s=S.pred.scores[m.key];return s&&Number.isInteger(s.a)&&Number.isInteger(s.b);}).length; }
 
-  const pct = totalMatches > 0 ? Math.round(filledCount / totalMatches * 100) : 0;
-
-  container.innerHTML = `
-    <div class="page-header">
-      <h1>📋 Mi Quiniela</h1>
-      <p>Ingresa tu predicción para todos los partidos</p>
+function renderQuiniela(main) {
+  const locked = !!S.pred.submitted;
+  const filled = filledCount();
+  const pct = Math.round(filled/72*100);
+  main.innerHTML = `
+    <div class="page-head"><div><h1>Mi Quiniela</h1><div class="sub">Predice los 72 partidos de la fase de grupos</div></div></div>
+    ${locked ? `<div class="banner banner-ok"><span class="ico">🔒</span><div><strong>Quiniela enviada y bloqueada.</strong> Ya no puedes modificarla. Abajo puedes ver tu cuadro de clasificados.</div></div>`
+             : `<div class="progress"><div class="row"><span>Avance</span><span>${filled}/72</span></div><div class="bar"><div style="width:${pct}%"></div></div></div>
+                <div class="banner banner-info"><span class="ico">⚠️</span><div>Cuando envíes tu quiniela quedará <b>bloqueada permanentemente</b>. Tus dieciseisavos se calculan solos a partir de estos resultados.</div></div>`}
+    <div class="subtabs">
+      <button class="subtab ${S.subtab==='grupos'?'active':''}" onclick="setSub('grupos')">⚽ Partidos</button>
+      <button class="subtab ${S.subtab==='tablas'?'active':''}" onclick="setSub('tablas')">📊 Mis tablas</button>
+      <button class="subtab ${S.subtab==='bracket'?'active':''}" onclick="setSub('bracket')">🗺️ Mi cuadro (16avos)</button>
     </div>
-    ${isComplete ? `
-      <div class="completed-banner">
-        <div class="icon">🔒</div>
-        <div>
-          <strong>¡Quiniela enviada y bloqueada!</strong>
-          <span>Ya no puedes modificar tus predicciones. ¡Suerte!</span>
-        </div>
-      </div>` : `
-      <div class="progress-wrap">
-        <div class="progress-info">
-          <span>Partidos completados</span>
-          <span><strong>${filledCount}</strong> / ${totalMatches}</span>
-        </div>
-        <div class="progress-bar-bg"><div class="progress-bar" style="width:${pct}%"></div></div>
-      </div>
-      <div class="alert alert-info">⚠️ Una vez que guardes todos los partidos, tu quiniela quedará <strong>bloqueada</strong> y no podrás modificarla.</div>
-    `}
-  `;
+    <div id="qbody"></div>`;
+  renderSub();
+}
+function setSub(t){ S.subtab=t; renderSub(); }
 
-  const phases = ['Grupos', 'Octavos', 'Cuartos', 'Semis', 'Tercer Lugar', 'Final'];
-  const phaseIcons = { 'Grupos': '🌍', 'Octavos': '⚡', 'Cuartos': '🔥', 'Semis': '💥', 'Tercer Lugar': '🥉', 'Final': '🏆' };
+function renderSub() {
+  const body = document.getElementById('qbody'); if(!body) return;
+  if (S.subtab==='grupos') return renderMatches(body);
+  if (S.subtab==='tablas') return renderMyTables(body);
+  if (S.subtab==='bracket') return renderMyBracket(body);
+}
 
-  for (const phase of phases) {
-    const phaseMatches = state.matches.filter(m => m.phase === phase);
-    if (phaseMatches.length === 0) continue;
-
-    const section = document.createElement('div');
-    section.className = 'phase-section';
-    section.innerHTML = `<div class="phase-title">${phaseIcons[phase]||'⚽'} ${phase}</div>`;
-
-    if (phase === 'Grupos') {
-      const groups = {};
-      for (const m of phaseMatches) {
-        if (!groups[m.group_name]) groups[m.group_name] = [];
-        groups[m.group_name].push(m);
-      }
-      for (const [g, gMatches] of Object.entries(groups).sort()) {
-        const gs = document.createElement('div');
-        gs.className = 'group-section';
-        gs.innerHTML = `<div class="group-label">Grupo ${g}</div>`;
-        const grid = document.createElement('div');
-        grid.className = 'matches-grid';
-        for (const m of gMatches) {
-          grid.appendChild(buildMatchCard(m, isComplete));
-        }
-        gs.appendChild(grid);
-        section.appendChild(gs);
-      }
-    } else {
-      const grid = document.createElement('div');
-      grid.className = 'matches-grid';
-      for (const m of phaseMatches) {
-        grid.appendChild(buildMatchCard(m, isComplete));
-      }
-      section.appendChild(grid);
-    }
-
-    container.appendChild(section);
+function renderMatches(body) {
+  const locked = !!S.pred.submitted;
+  body.innerHTML = '';
+  for (const g of GROUP_ORDER) {
+    const gms = S.meta.matches.filter(m=>m.group===g);
+    const block = document.createElement('div'); block.className='group-block';
+    block.innerHTML = `<div class="group-title"><span class="group-badge">${g}</span><span class="gname">Grupo ${g}</span></div>`;
+    const list = document.createElement('div'); list.className='match-list';
+    for (const m of gms) list.appendChild(matchRow(m, locked));
+    block.appendChild(list); body.appendChild(block);
   }
-
-  if (!isComplete) {
-    const saveBtn = document.createElement('div');
-    saveBtn.style.cssText = 'position: sticky; bottom: 1.5rem; display: flex; justify-content: center; padding: 1rem 0;';
-    saveBtn.innerHTML = `
-      <button class="btn btn-gold" style="font-size:1rem; padding: 14px 40px;" onclick="saveAllPredictions()">
-        💾 Guardar Quiniela (${filledCount}/${totalMatches})
-      </button>
-    `;
-    container.appendChild(saveBtn);
+  if (!locked) {
+    const sb = document.createElement('div'); sb.className='savebar';
+    sb.innerHTML = `<div class="inner">
+      <span class="count">Avance <b id="cnt">${filledCount()}</b>/72</span>
+      <button class="btn btn-ghost btn-sm" onclick="saveDraft()">Guardar borrador</button>
+      <button class="btn btn-yellow btn-sm" id="subbtn" onclick="submitQuiniela()">🔒 Enviar definitiva</button>
+    </div>`;
+    body.appendChild(sb);
   }
 }
 
-function buildMatchCard(match, isComplete) {
-  const pred = state.myPredictions[match.id];
-  const hasPred = !!pred;
-  const locked = isComplete;
-
-  const card = document.createElement('div');
-  card.className = `match-card${hasPred ? ' has-pred' : ''}${locked ? ' locked' : ''}`;
-  card.dataset.matchId = match.id;
-
-  if (locked && pred) {
-    const matchResult = match.result1 !== null && match.result2 !== null;
-    let pointClass = '';
-    if (matchResult) {
-      if (pred.pred1 === match.result1 && pred.pred2 === match.result2) pointClass = 'pred-correct';
-      else {
-        const mw = match.result1 > match.result2 ? 1 : match.result1 < match.result2 ? 2 : 0;
-        const pw = pred.pred1 > pred.pred2 ? 1 : pred.pred1 < pred.pred2 ? 2 : 0;
-        pointClass = mw === pw ? 'pred-winner' : 'pred-wrong';
-      }
-    }
-    card.innerHTML = `
-      <div class="team-name team-left">${escHtml(match.team1)}</div>
-      <div class="score-inputs">
-        <span class="pred-score ${pointClass}">${pred.pred1} - ${pred.pred2}</span>
-      </div>
-      <div class="team-name team-right">${escHtml(match.team2)}</div>
-    `;
-  } else {
-    card.innerHTML = `
-      <div class="team-name team-left">${escHtml(match.team1)}</div>
-      <div class="score-inputs">
-        <input type="number" min="0" max="99" value="${pred ? pred.pred1 : ''}" placeholder="0"
-          onchange="updatePred(${match.id}, 'pred1', this.value)"
-          oninput="updatePred(${match.id}, 'pred1', this.value)" />
-        <span class="score-sep">-</span>
-        <input type="number" min="0" max="99" value="${pred ? pred.pred2 : ''}" placeholder="0"
-          onchange="updatePred(${match.id}, 'pred2', this.value)"
-          oninput="updatePred(${match.id}, 'pred2', this.value)" />
-      </div>
-      <div class="team-name team-right">${escHtml(match.team2)}</div>
-    `;
-  }
-  return card;
+function matchRow(m, locked) {
+  const s = S.pred.scores[m.key] || {};
+  const filled = Number.isInteger(s.a) && Number.isInteger(s.b);
+  const row = document.createElement('div');
+  row.className = `match ${filled?'filled':''} ${locked?'locked':''}`;
+  const left = `<div class="team left"><span class="tn">${esc(tn(m.team1))}</span><span class="flag">${fl(m.team1)}</span></div>`;
+  const right = `<div class="team right"><span class="flag">${fl(m.team2)}</span><span class="tn">${esc(tn(m.team2))}</span></div>`;
+  const mid = locked
+    ? `<div class="score-static">${filled?`${s.a} - ${s.b}`:'—'}</div>`
+    : `<div class="score-in">
+         <input type="number" min="0" max="49" inputmode="numeric" value="${filled?s.a:''}" data-k="${m.key}" data-s="a">
+         <span class="score-sep">–</span>
+         <input type="number" min="0" max="49" inputmode="numeric" value="${filled?s.b:''}" data-k="${m.key}" data-s="b">
+       </div>`;
+  row.innerHTML = left + mid + right;
+  if (!locked) row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', onScoreInput));
+  return row;
 }
 
-function updatePred(matchId, field, value) {
-  const v = parseInt(value);
-  if (isNaN(v) || v < 0) return;
-  if (!state.myPredictions[matchId]) state.myPredictions[matchId] = { match_id: matchId };
-  state.myPredictions[matchId][field] = v;
-  
-  const card = document.querySelector(`[data-match-id="${matchId}"]`);
-  if (card) {
-    const p = state.myPredictions[matchId];
-    if (p.pred1 !== undefined && p.pred2 !== undefined) {
-      card.classList.add('has-pred');
-    }
-  }
-
-  // Update button count
-  const filled = Object.values(state.myPredictions).filter(p => p.pred1 !== undefined && p.pred2 !== undefined).length;
-  const btn = document.querySelector('[onclick="saveAllPredictions()"]');
-  if (btn) btn.textContent = `💾 Guardar Quiniela (${filled}/${state.matches.length})`;
+function onScoreInput(e) {
+  const k = e.target.dataset.k, side = e.target.dataset.s;
+  let v = e.target.value === '' ? null : Math.max(0, Math.min(49, parseInt(e.target.value)));
+  if (!S.pred.scores[k]) S.pred.scores[k] = {};
+  S.pred.scores[k][side] = (v===null||isNaN(v)) ? null : v;
+  const s = S.pred.scores[k];
+  const row = e.target.closest('.match');
+  if (row) row.classList.toggle('filled', Number.isInteger(s.a)&&Number.isInteger(s.b));
+  const cnt = document.getElementById('cnt'); if (cnt) cnt.textContent = filledCount();
 }
 
-async function saveAllPredictions() {
-  const predictions = [];
-  for (const [matchId, pred] of Object.entries(state.myPredictions)) {
-    if (pred.pred1 !== undefined && pred.pred2 !== undefined) {
-      predictions.push({ match_id: parseInt(matchId), pred1: pred.pred1, pred2: pred.pred2 });
-    }
-  }
+async function saveDraft() {
+  try { await api('PUT','/api/prediction',{scores:S.pred.scores}); toast('Borrador guardado'); }
+  catch(e){ toast(e.message,'err'); }
+}
 
-  if (predictions.length < state.matches.length) {
-    showToast(`Faltan ${state.matches.length - predictions.length} partidos por completar`, 'error');
-    return;
-  }
-
+async function submitQuiniela() {
+  const filled = filledCount();
+  if (filled < 72) { toast(`Faltan ${72-filled} partidos`, 'err'); return; }
+  if (!confirm('¿Enviar tu quiniela? Quedará BLOQUEADA y no podrás modificarla.')) return;
   try {
-    const result = await api('POST', '/api/predictions', { predictions });
-    await loadMyPredictions();
-    showToast('¡Quiniela guardada y bloqueada! 🔒', 'success');
-    setTimeout(() => renderApp(), 800);
-  } catch (e) {
-    showToast(e.message, 'error');
+    await api('PUT','/api/prediction',{scores:S.pred.scores});
+    await api('POST','/api/prediction/submit',{scores:S.pred.scores});
+    S.pred.submitted = 1;
+    toast('¡Quiniela enviada! 🔒');
+    render();
+  } catch(e){ toast(e.message,'err'); }
+}
+
+// ─── MIS TABLAS ────────────────────────────────────────────────────────────────
+async function renderMyTables(body) {
+  body.innerHTML = `<div class="bracket-note">Tablas calculadas con tus predicciones (puntos → dif. de gol → goles a favor → enfrentamiento directo). <span class="tag tag-q">CLASIFICA</span> 1° y 2° · <span class="tag tag-3">3°</span> puede entrar como mejor tercero.</div><div id="tabs-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem"></div>`;
+  let q;
+  try { q = await api('GET','/api/prediction/bracket'); } catch(e){ body.innerHTML=`<div class="alert alert-error">${esc(e.message)}</div>`; return; }
+  const grid = document.getElementById('tabs-grid');
+  const qualThirds = new Set(q.qualifiedThirds);
+  for (const g of GROUP_ORDER) {
+    const tbl = q.allTables[g];
+    const card = document.createElement('div'); card.className='card card-pad';
+    let rows = tbl.map((t,i) => {
+      const cls = i===0?'qual-1':i===1?'qual-2':i===2?(qualThirds.has(t.team)?'qual-3':'qual-out'):'qual-out';
+      let badge='';
+      if (i<2) badge=`<span class="tag tag-q">Clasifica</span>`;
+      else if (i===2) badge = qualThirds.has(t.team)?`<span class="tag tag-q">Mejor 3°</span>`:`<span class="tag tag-3">3°</span>`;
+      return `<tr class="${cls}"><td>${fl(t.team)} <b>${esc(tn(t.team))}</b> ${badge}</td>
+        <td class="num">${t.pts}</td><td class="num">${t.dg>0?'+':''}${t.dg}</td><td class="num">${t.gf}</td></tr>`;
+    }).join('');
+    card.innerHTML = `<div class="group-title" style="margin-bottom:.5rem"><span class="group-badge">${g}</span><span class="gname">Grupo ${g}</span></div>
+      <table class="mini-table"><thead><tr><th>Equipo</th><th class="num">Pts</th><th class="num">DG</th><th class="num">GF</th></tr></thead><tbody>${rows}</tbody></table>`;
+    grid.appendChild(card);
   }
 }
 
-// ─── RESULTADOS ──────────────────────────────────────────────────────────────
-function renderResultados(container) {
-  container.innerHTML = `
-    <div class="page-header">
-      <h1>⚽ Resultados del Mundial</h1>
-      <p>Resultados oficiales de todos los partidos</p>
-    </div>
-  `;
+// ─── MI CUADRO (16avos) ──────────────────────────────────────────────────────
+async function renderMyBracket(body) {
+  let q;
+  try { q = await api('GET','/api/prediction/bracket'); } catch(e){ body.innerHTML=`<div class="alert alert-error">${esc(e.message)}</div>`; return; }
+  const winners = {}, runners = {};
+  for (const g of GROUP_ORDER){ winners[g]=q.allTables[g][0].team; runners[g]=q.allTables[g][1].team; }
+  const thirds = q.qualifiedThirds.slice();
 
-  const phases = ['Grupos', 'Octavos', 'Cuartos', 'Semis', 'Tercer Lugar', 'Final'];
-  const phaseIcons = { 'Grupos': '🌍', 'Octavos': '⚡', 'Cuartos': '🔥', 'Semis': '💥', 'Tercer Lugar': '🥉', 'Final': '🏆' };
+  // Estructura de 16avos: 8 llaves "ganador vs tercero" (1A,1B,1D,1E,1G,1I,1K,1L)
+  // y 8 llaves "2° vs 2°/1°" según patrón estándar. Las llaves con tercero se
+  // muestran con los mejores terceros disponibles (asignación ilustrativa: el
+  // orden NO afecta la puntuación, que es por equipos clasificados).
+  const winnerSlots = ['A','B','D','E','G','I','K','L'];
+  const ties = [];
+  winnerSlots.forEach((g,i) => {
+    ties.push({ label:`16avos · llave ${i+1}`, s1:{team:winners[g],pos:`1° ${g}`}, s2:{team:thirds[i]||null,pos:'Mejor 3°'} });
+  });
+  // Llaves restantes entre 1°/2° (cruces fijos representativos)
+  const pairs = [['C','F'],['H','J'],['L','K'],['A','C'],['E','I'],['B','D'],['G','H'],['J','L']];
+  pairs.forEach(([a,b],i) => {
+    ties.push({ label:`16avos · llave ${i+9}`, s1:{team:winners[a],pos:`1° ${a}`}, s2:{team:runners[b],pos:`2° ${b}`} });
+  });
 
-  for (const phase of phases) {
-    const phaseMatches = state.matches.filter(m => m.phase === phase);
-    if (phaseMatches.length === 0) continue;
+  body.innerHTML = `<div class="bracket-note">Tu cuadro de <b>dieciseisavos</b> según tus predicciones. Clasifican <b>1°</b>, <b>2°</b> de cada grupo y los <b>8 mejores terceros</b>. La colocación exacta de los terceros la fija FIFA al cerrar la fase de grupos; <b>no afecta tu puntuación</b> (se premia acertar qué equipos clasifican).</div>
+    <div class="r32-grid">${ties.map(t=>`
+      <div class="tie"><div class="h">${t.label}</div>
+        <div class="side"><span class="flag">${t.s1.team?fl(t.s1.team):'⬜'}</span> <span>${t.s1.team?esc(tn(t.s1.team)):'—'}</span><span class="pos">${t.s1.pos}</span></div>
+        <div class="side"><span class="flag">${t.s2.team?fl(t.s2.team):'⬜'}</span> <span>${t.s2.team?esc(tn(t.s2.team)):'Por definir'}</span><span class="pos">${t.s2.pos}</span></div>
+      </div>`).join('')}</div>`;
+}
 
-    const section = document.createElement('div');
-    section.className = 'phase-section';
-    section.innerHTML = `<div class="phase-title">${phaseIcons[phase]||'⚽'} ${phase}</div>`;
+// ─── RESULTADOS (oficiales) ─────────────────────────────────────────────────────
+async function renderResultados(main) {
+  main.innerHTML = `<div class="page-head"><div><h1>Resultados Oficiales</h1><div class="sub">Marcadores reales de la fase de grupos</div></div></div><div id="rbody">Cargando…</div>`;
+  let real = {};
+  try { real = await api('GET','/api/results'); } catch { real = {}; }
+  renderResultsView(document.getElementById('rbody'), real, false);
+}
 
-    if (phase === 'Grupos') {
-      const groups = {};
-      for (const m of phaseMatches) {
-        if (!groups[m.group_name]) groups[m.group_name] = [];
-        groups[m.group_name].push(m);
-      }
-      for (const [g, gMatches] of Object.entries(groups).sort()) {
-        const gs = document.createElement('div');
-        gs.className = 'group-section';
-        gs.innerHTML = `<div class="group-label">Grupo ${g}</div>`;
-        const grid = document.createElement('div');
-        grid.className = 'matches-grid';
-        for (const m of gMatches) grid.appendChild(buildResultCard(m));
-        gs.appendChild(grid);
-        section.appendChild(gs);
-      }
-    } else {
-      const grid = document.createElement('div');
-      grid.className = 'matches-grid';
-      for (const m of phaseMatches) grid.appendChild(buildResultCard(m));
-      section.appendChild(grid);
+function renderResultsView(body, real, editable) {
+  body.innerHTML='';
+  for (const g of GROUP_ORDER) {
+    const gms = S.meta.matches.filter(m=>m.group===g);
+    const block=document.createElement('div'); block.className='group-block';
+    block.innerHTML=`<div class="group-title"><span class="group-badge">${g}</span><span class="gname">Grupo ${g}</span></div>`;
+    const list=document.createElement('div'); list.className='match-list';
+    for (const m of gms){
+      const s=real[m.key]||{};
+      const has=Number.isInteger(s.a)&&Number.isInteger(s.b);
+      const row=document.createElement('div'); row.className=`match ${has?'filled':''}`;
+      const mid = editable
+        ? `<div class="score-in">
+             <input type="number" min="0" max="49" value="${has?s.a:''}" data-k="${m.key}" data-s="a">
+             <span class="score-sep">–</span>
+             <input type="number" min="0" max="49" value="${has?s.b:''}" data-k="${m.key}" data-s="b">
+           </div>`
+        : `<div class="score-static">${has?`${s.a} - ${s.b}`:'<span style="color:var(--muted);font-size:.8rem">—</span>'}</div>`;
+      row.innerHTML=`<div class="team left"><span class="tn">${esc(tn(m.team1))}</span><span class="flag">${fl(m.team1)}</span></div>${mid}<div class="team right"><span class="flag">${fl(m.team2)}</span><span class="tn">${esc(tn(m.team2))}</span></div>`;
+      if (editable) row.querySelectorAll('input').forEach(i=>i.addEventListener('input',onResultInput));
+      list.appendChild(row);
     }
-    container.appendChild(section);
+    block.appendChild(list); body.appendChild(block);
   }
 }
 
-function buildResultCard(match) {
-  const hasResult = match.result1 !== null && match.result2 !== null;
-  const card = document.createElement('div');
-  card.className = 'match-card';
-  
-  if (hasResult) {
-    const w1 = match.result1 > match.result2;
-    const w2 = match.result2 > match.result1;
-    card.innerHTML = `
-      <div class="team-name team-left" style="${w1?'color:var(--green)':''}">${escHtml(match.team1)}</div>
-      <div class="score-inputs">
-        <span class="match-result-badge">
-          <span style="${w1?'color:var(--green)':'color:var(--text)'}">${match.result1}</span>
-          <span style="color:var(--text-muted); font-size:1rem">-</span>
-          <span style="${w2?'color:var(--green)':'color:var(--text)'}">${match.result2}</span>
-        </span>
-      </div>
-      <div class="team-name team-right" style="${w2?'color:var(--green)':''}">${escHtml(match.team2)}</div>
-    `;
-  } else {
-    card.innerHTML = `
-      <div class="team-name team-left">${escHtml(match.team1)}</div>
-      <div class="score-inputs"><span style="color:var(--text-muted); font-size:0.85rem">Pendiente</span></div>
-      <div class="team-name team-right">${escHtml(match.team2)}</div>
-    `;
-  }
-  return card;
+// ─── ADMIN ──────────────────────────────────────────────────────────────────────
+function renderAdmin(main) {
+  main.innerHTML=`<div class="page-head"><div><h1>Panel Admin</h1><div class="sub">Gestiona participantes y registra resultados</div></div></div>
+    <div class="subtabs">
+      <button class="subtab ${S.subtab==='users'?'active':''}" onclick="setAdminTab('users')">👥 Participantes</button>
+      <button class="subtab ${S.subtab!=='users'?'active':''}" onclick="setAdminTab('results')">⚽ Resultados</button>
+    </div><div id="abody"></div>`;
+  if (S.subtab!=='users' && S.subtab!=='results') S.subtab='users';
+  renderAdminBody();
 }
+function setAdminTab(t){ S.subtab=t; renderAdmin(document.querySelector('main')); }
+function renderAdminBody(){ const b=document.getElementById('abody'); if(!b)return; S.subtab==='results'?adminResults(b):adminUsers(b); }
 
-// ─── ADMIN ───────────────────────────────────────────────────────────────────
-function renderAdmin(container) {
-  container.innerHTML = `
-    <div class="page-header"><h1>⚙️ Panel de Administración</h1></div>
-    <div class="admin-tabs">
-      <button class="admin-tab ${state.adminTab==='users'?'active':''}" onclick="setAdminTab('users')">👥 Usuarios</button>
-      <button class="admin-tab ${state.adminTab==='results'?'active':''}" onclick="setAdminTab('results')">⚽ Resultados</button>
-    </div>
-    <div id="admin-content"></div>
-  `;
-
-  renderAdminContent();
+async function adminUsers(body) {
+  body.innerHTML=`<div class="card card-pad" style="margin-bottom:1.2rem">
+    <div style="font-weight:700;margin-bottom:.9rem">Crear participante</div>
+    <div class="form-grid">
+      <div class="field" style="margin:0"><label>Nombre</label><input type="text" id="nn" placeholder="Juan Pérez"></div>
+      <div class="field" style="margin:0"><label>Usuario</label><input type="text" id="nu" placeholder="jperez"></div>
+      <div class="field" style="margin:0"><label>Contraseña</label><input type="text" id="np" placeholder="temporal123"></div>
+      <button class="btn btn-primary" onclick="createUser()">Crear</button>
+    </div><div id="cmsg"></div>
+  </div><div id="ulist">Cargando…</div>`;
+  await loadUsers();
 }
-
-function setAdminTab(tab) {
-  state.adminTab = tab;
-  const tabs = document.querySelectorAll('.admin-tab');
-  tabs.forEach(t => t.classList.toggle('active', t.textContent.includes(tab === 'users' ? 'Usuarios' : 'Resultados')));
-  renderAdminContent();
+async function loadUsers() {
+  const users = await api('GET','/api/admin/users');
+  const el = document.getElementById('ulist');
+  if (!users.length) { el.innerHTML=`<div class="card card-pad"><div class="empty"><div class="ico">👥</div><h3>Sin participantes</h3></div></div>`; return; }
+  el.innerHTML=`<div class="card" style="overflow:hidden"><table class="users-table"><thead><tr>
+    <th>Nombre</th><th>Usuario</th><th>Quiniela</th><th>Acciones</th></tr></thead><tbody>
+    ${users.map(u=>`<tr>
+      <td><b>${esc(u.display_name)}</b></td><td style="color:var(--muted)">${esc(u.username)}</td>
+      <td>${u.submitted?`<span class="chip chip-green">Enviada</span>`:`<span class="chip chip-gray">${u.filled}/72</span>`}</td>
+      <td><div class="actions">
+        <button class="btn btn-ghost btn-sm" onclick="resetPass(${u.id},'${esc(u.display_name)}')">Contraseña</button>
+        ${u.submitted?`<button class="btn btn-ghost btn-sm" onclick="unlock(${u.id},'${esc(u.display_name)}')">Desbloquear</button>`:''}
+        <button class="btn btn-danger btn-sm" onclick="delUser(${u.id},'${esc(u.display_name)}')">Eliminar</button>
+      </div></td></tr>`).join('')}
+  </tbody></table></div>`;
 }
-
-async function renderAdminContent() {
-  const container = document.getElementById('admin-content');
-  if (!container) return;
-  if (state.adminTab === 'users') await renderAdminUsers(container);
-  else await renderAdminResults(container);
-}
-
-async function renderAdminUsers(container) {
-  container.innerHTML = `<p style="color:var(--text-muted)">Cargando...</p>`;
-  const users = await api('GET', '/api/admin/users');
-
-  container.innerHTML = `
-    <div class="card" style="margin-bottom: 1.5rem;">
-      <h3 style="margin-bottom: 1.25rem; font-size: 1rem; font-weight: 600;">Crear nuevo usuario</h3>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Nombre completo</label>
-          <input type="text" id="new-name" placeholder="Ej: Juan Pérez" />
-        </div>
-        <div class="form-group">
-          <label>Usuario</label>
-          <input type="text" id="new-user" placeholder="juanperez" />
-        </div>
-        <div class="form-group">
-          <label>Contraseña</label>
-          <input type="text" id="new-pass" placeholder="Contraseña temporal" />
-        </div>
-        <div class="form-group" style="flex: 0;">
-          <label>&nbsp;</label>
-          <button class="btn btn-primary" onclick="createUser()">➕ Crear</button>
-        </div>
-      </div>
-      <div id="user-create-msg"></div>
-    </div>
-
-    <div class="card" style="padding: 0; overflow: hidden;">
-      ${users.length === 0 ? `<div class="empty-state"><div class="icon">👥</div><h3>Sin usuarios</h3><p>Crea el primer usuario arriba.</p></div>` : `
-        <table class="users-table">
-          <thead><tr>
-            <th>Nombre</th><th>Usuario</th><th>Fecha</th><th>Acciones</th>
-          </tr></thead>
-          <tbody>
-            ${users.map(u => `
-              <tr>
-                <td><strong>${escHtml(u.display_name)}</strong></td>
-                <td style="color:var(--text-muted)">${escHtml(u.username)}</td>
-                <td style="color:var(--text-muted); font-size:0.85rem">${new Date(u.created_at).toLocaleDateString('es')}</td>
-                <td style="display:flex; gap:8px;">
-                  <button class="btn btn-secondary btn-sm" onclick="resetPassword(${u.id}, '${escHtml(u.display_name)}')">🔑 Contraseña</button>
-                  <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id}, '${escHtml(u.display_name)}')">🗑️ Eliminar</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `}
-    </div>
-  `;
-}
-
 async function createUser() {
-  const name = document.getElementById('new-name').value.trim();
-  const user = document.getElementById('new-user').value.trim();
-  const pass = document.getElementById('new-pass').value.trim();
-  const msg = document.getElementById('user-create-msg');
+  const displayName=document.getElementById('nn').value.trim();
+  const username=document.getElementById('nu').value.trim();
+  const password=document.getElementById('np').value.trim();
+  const msg=document.getElementById('cmsg');
+  if(!displayName||!username||!password){msg.innerHTML=`<div class="alert alert-error" style="margin-top:.9rem">Completa todos los campos</div>`;return;}
+  try{ await api('POST','/api/admin/users',{username,password,displayName});
+    msg.innerHTML=`<div class="alert alert-ok" style="margin-top:.9rem">✅ ${esc(displayName)} creado</div>`;
+    ['nn','nu','np'].forEach(id=>document.getElementById(id).value='');
+    await loadUsers();
+  }catch(e){ msg.innerHTML=`<div class="alert alert-error" style="margin-top:.9rem">${esc(e.message)}</div>`; }
+}
+async function delUser(id,name){ if(!confirm(`¿Eliminar a ${name} y su quiniela?`))return; await api('DELETE',`/api/admin/users/${id}`); toast(`${name} eliminado`); await loadUsers(); }
+async function resetPass(id,name){ const p=prompt(`Nueva contraseña para ${name}:`); if(!p)return; await api('PUT',`/api/admin/users/${id}/password`,{password:p}); toast('Contraseña actualizada'); }
+async function unlock(id,name){ if(!confirm(`¿Desbloquear la quiniela de ${name}? Podrá volver a editarla.`))return; await api('PUT',`/api/admin/users/${id}/unlock`); toast('Quiniela desbloqueada'); await loadUsers(); }
 
-  if (!name || !user || !pass) {
-    msg.innerHTML = `<div class="alert alert-error" style="margin-top:1rem">Completa todos los campos</div>`;
-    return;
-  }
-
-  try {
-    await api('POST', '/api/admin/users', { username: user, password: pass, displayName: name });
-    msg.innerHTML = `<div class="alert alert-success" style="margin-top:1rem">✅ Usuario <strong>${escHtml(name)}</strong> creado correctamente</div>`;
-    document.getElementById('new-name').value = '';
-    document.getElementById('new-user').value = '';
-    document.getElementById('new-pass').value = '';
-    await renderAdminContent();
-  } catch (e) {
-    msg.innerHTML = `<div class="alert alert-error" style="margin-top:1rem">${escHtml(e.message)}</div>`;
-  }
+let ADMIN_RESULTS = {};
+async function adminResults(body) {
+  body.innerHTML=`<div class="banner banner-info"><span class="ico">⚽</span><div>Ingresa los marcadores reales. El ranking se actualiza solo. Los puntos por clasificados a 16avos se otorgan cuando estén los 72 partidos.</div></div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:1rem"><button class="btn btn-primary" onclick="saveResults()">💾 Guardar resultados</button></div>
+    <div id="resbody"></div>`;
+  ADMIN_RESULTS = await api('GET','/api/admin/results');
+  renderResultsView(document.getElementById('resbody'), ADMIN_RESULTS, true);
+}
+function onResultInput(e){
+  const k=e.target.dataset.k, side=e.target.dataset.s;
+  let v=e.target.value===''?null:Math.max(0,Math.min(49,parseInt(e.target.value)));
+  if(!ADMIN_RESULTS[k])ADMIN_RESULTS[k]={};
+  ADMIN_RESULTS[k][side]=(v===null||isNaN(v))?null:v;
+  const row=e.target.closest('.match'); const s=ADMIN_RESULTS[k];
+  if(row)row.classList.toggle('filled',Number.isInteger(s.a)&&Number.isInteger(s.b));
+}
+async function saveResults(){
+  // limpia entradas incompletas
+  const clean={}; for(const k of Object.keys(ADMIN_RESULTS)){const s=ADMIN_RESULTS[k]; if(s&&Number.isInteger(s.a)&&Number.isInteger(s.b))clean[k]=s;}
+  try{ const r=await api('PUT','/api/admin/results',{scores:clean}); toast(`Guardado (${r.count} partidos)`); }
+  catch(e){ toast(e.message,'err'); }
 }
 
-async function deleteUser(id, name) {
-  if (!confirm(`¿Eliminar a "${name}" y todas sus predicciones?`)) return;
-  try {
-    await api('DELETE', `/api/admin/users/${id}`);
-    showToast(`Usuario ${name} eliminado`, 'success');
-    await renderAdminContent();
-  } catch (e) {
-    showToast(e.message, 'error');
-  }
+// ─── TOAST ────────────────────────────────────────────────────────────────────
+function toast(msg,type='ok'){
+  const old=document.getElementById('toast'); if(old)old.remove();
+  const t=document.createElement('div'); t.id='toast'; t.className=`toast ${type}`; t.textContent=msg;
+  document.body.appendChild(t); setTimeout(()=>t.remove(),2600);
 }
 
-async function resetPassword(id, name) {
-  const newPass = prompt(`Nueva contraseña para ${name}:`);
-  if (!newPass) return;
-  try {
-    await api('PUT', `/api/admin/users/${id}/password`, { password: newPass });
-    showToast(`Contraseña de ${name} actualizada`, 'success');
-  } catch (e) {
-    showToast(e.message, 'error');
-  }
-}
-
-async function renderAdminResults(container) {
-  container.innerHTML = `<p style="color:var(--text-muted)">Cargando...</p>`;
-  await loadMatches();
-
-  const phases = ['Grupos', 'Octavos', 'Cuartos', 'Semis', 'Tercer Lugar', 'Final'];
-  const phaseIcons = { 'Grupos': '🌍', 'Octavos': '⚡', 'Cuartos': '🔥', 'Semis': '💥', 'Tercer Lugar': '🥉', 'Final': '🏆' };
-
-  container.innerHTML = `
-    <div class="alert alert-info">Ingresa los resultados reales del Mundial. El ranking se actualiza automáticamente.</div>
-  `;
-
-  for (const phase of phases) {
-    const phaseMatches = state.matches.filter(m => m.phase === phase);
-    if (phaseMatches.length === 0) continue;
-
-    const section = document.createElement('div');
-    section.className = 'phase-section';
-    section.innerHTML = `<div class="phase-title">${phaseIcons[phase]||'⚽'} ${phase}</div>`;
-
-    const grid = document.createElement('div');
-    grid.className = 'matches-grid';
-
-    for (const m of phaseMatches) {
-      const hasResult = m.result1 !== null && m.result2 !== null;
-      const card = document.createElement('div');
-      card.className = 'match-card' + (hasResult ? ' has-pred' : '');
-      card.id = `admin-match-${m.id}`;
-
-      card.innerHTML = `
-        <div style="grid-column: 1/-1; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-          <div class="result-form" style="flex:1; display: flex; align-items: center; gap: 10px;">
-            <input type="text" class="team-input" id="t1-${m.id}" value="${escHtml(m.team1)}" placeholder="Equipo 1" style="width:140px" />
-            <input type="number" min="0" max="99" id="r1-${m.id}" value="${hasResult ? m.result1 : ''}" placeholder="0" />
-            <span class="score-sep">-</span>
-            <input type="number" min="0" max="99" id="r2-${m.id}" value="${hasResult ? m.result2 : ''}" placeholder="0" />
-            <input type="text" class="team-input" id="t2-${m.id}" value="${escHtml(m.team2)}" placeholder="Equipo 2" style="width:140px" />
-            <button class="btn btn-primary btn-sm" onclick="saveResult(${m.id})">Guardar</button>
-            ${hasResult ? `<button class="btn btn-secondary btn-sm" onclick="clearResult(${m.id})">✕ Limpiar</button>` : ''}
-          </div>
-          ${hasResult ? `<span class="badge badge-green">✓ Registrado</span>` : `<span class="badge badge-muted">Pendiente</span>`}
-        </div>
-      `;
-      grid.appendChild(card);
-    }
-    section.appendChild(grid);
-    container.appendChild(section);
-  }
-}
-
-async function saveResult(matchId) {
-  const r1 = document.getElementById(`r1-${matchId}`).value;
-  const r2 = document.getElementById(`r2-${matchId}`).value;
-  const t1 = document.getElementById(`t1-${matchId}`).value.trim();
-  const t2 = document.getElementById(`t2-${matchId}`).value.trim();
-
-  if (r1 === '' || r2 === '') { showToast('Ingresa ambos resultados', 'error'); return; }
-
-  try {
-    await api('PUT', `/api/admin/matches/${matchId}/result`, {
-      result1: parseInt(r1), result2: parseInt(r2),
-      team1: t1, team2: t2
-    });
-    await loadMatches();
-    showToast('Resultado guardado ✅', 'success');
-    await renderAdminContent();
-  } catch (e) {
-    showToast(e.message, 'error');
-  }
-}
-
-async function clearResult(matchId) {
-  if (!confirm('¿Limpiar este resultado?')) return;
-  try {
-    await api('DELETE', `/api/admin/matches/${matchId}/result`);
-    await loadMatches();
-    showToast('Resultado eliminado', 'success');
-    await renderAdminContent();
-  } catch (e) {
-    showToast(e.message, 'error');
-  }
-}
-
-// ─── TOAST ───────────────────────────────────────────────────────────────────
-function showToast(msg, type = 'success') {
-  const existing = document.getElementById('toast');
-  if (existing) existing.remove();
-  const t = document.createElement('div');
-  t.id = 'toast';
-  t.style.cssText = `
-    position: fixed; bottom: 2rem; right: 2rem; z-index: 999;
-    background: ${type === 'success' ? 'var(--green)' : type === 'error' ? 'var(--red)' : 'var(--gold)'};
-    color: ${type === 'success' || type === 'error' ? '#fff' : '#000'};
-    padding: 12px 20px; border-radius: 10px;
-    font-weight: 600; font-size: 0.9rem;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-    animation: slideIn 0.2s ease;
-  `;
-  const styleEl = document.createElement('style');
-  styleEl.textContent = '@keyframes slideIn { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }';
-  document.head.appendChild(styleEl);
-  t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
-}
-
-// ─── UTILS ───────────────────────────────────────────────────────────────────
-function escHtml(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ─── START ───────────────────────────────────────────────────────────────────
+window.go=go; window.logout=logout; window.doLogin=doLogin; window.setSub=setSub;
+window.saveDraft=saveDraft; window.submitQuiniela=submitQuiniela;
+window.setAdminTab=setAdminTab; window.createUser=createUser; window.delUser=delUser;
+window.resetPass=resetPass; window.unlock=unlock; window.saveResults=saveResults;
 init();
