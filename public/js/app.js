@@ -42,6 +42,10 @@ function render() {
   const main = document.createElement('main');
   app.appendChild(main);
   ({ ranking: renderRanking, quiniela: renderQuiniela, resultados: renderResultados, admin: renderAdmin }[S.page] || renderRanking)(main);
+  const foot = document.createElement('footer');
+  foot.className = 'app-footer';
+  foot.innerHTML = `Hecho por <strong>Juan C. Martin</strong> · IT · © ${new Date().getFullYear()}`;
+  app.appendChild(foot);
 }
 
 function nav() {
@@ -80,6 +84,7 @@ function renderLogin() {
       <div class="field"><label>Contraseña</label><input type="password" id="lp" autocomplete="current-password" placeholder="••••••••"></div>
       <button class="btn btn-primary btn-full" onclick="doLogin()">Ingresar</button>
     </div>
+    <div class="login-credit">Hecho por <strong>Juan C. Martin</strong> · IT</div>
   </div></div>`;
   const p = document.getElementById('lp');
   p.addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
