@@ -15,7 +15,7 @@ const TEAMS = {
   QAT: { name: 'Qatar', flag: '🇶🇦' }, BIH: { name: 'Bosnia', flag: '🇧🇦' },
   // Grupo C
   BRA: { name: 'Brasil', flag: '🇧🇷' }, MAR: { name: 'Marruecos', flag: '🇲🇦' },
-  SCO: { name: 'Escocia', flag: '🏴󠁧󠁢󠁳󠁣󠁴󠁿' }, HAI: { name: 'Haití', flag: '🇭🇹' },
+  SCO: { name: 'Escocia', flag: 'GB-SCT' }, HAI: { name: 'Haití', flag: '🇭🇹' },
   // Grupo D
   USA: { name: 'Estados Unidos', flag: '🇺🇸' }, PAR: { name: 'Paraguay', flag: '🇵🇾' },
   AUS: { name: 'Australia', flag: '🇦🇺' }, TUR: { name: 'Turquía', flag: '🇹🇷' },
@@ -41,7 +41,7 @@ const TEAMS = {
   POR: { name: 'Portugal', flag: '🇵🇹' }, COL: { name: 'Colombia', flag: '🇨🇴' },
   UZB: { name: 'Uzbekistán', flag: '🇺🇿' }, COD: { name: 'RD Congo', flag: '🇨🇩' },
   // Grupo L
-  ENG: { name: 'Inglaterra', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' }, CRO: { name: 'Croacia', flag: '🇭🇷' },
+  ENG: { name: 'Inglaterra', flag: 'GB-EN' }, CRO: { name: 'Croacia', flag: '🇭🇷' },
   GHA: { name: 'Ghana', flag: '🇬🇭' }, PAN: { name: 'Panamá', flag: '🇵🇦' },
 };
 

@@ -297,7 +297,41 @@ app.get('/api/ranking', requireAuth, (req, res) => {
   });
   ranking.sort((a, b) => b.total - a.total || b.exactCount - a.exactCount || a.displayName.localeCompare(b.displayName));
   const playedMatches = Object.values(real.scores).filter(s => s && s.a != null).length;
-  res.json({ ranking, playedMatches, totalMatches: 72, groupStageComplete: engine.isGroupStageComplete(real.scores) });
+  // ¿El que consulta ya envió su quiniela? (define si puede ver las de otros)
+  const meSubmitted = req.session.isAdmin ? 1 : (getPrediction(req.session.userId).submitted || 0);
+  res.json({ ranking, playedMatches, totalMatches: 72, groupStageComplete: engine.isGroupStageComplete(real.scores), meSubmitted, viewerIsAdmin: !!req.session.isAdmin });
+});
+
+// Ver la quiniela completa de un participante (grupos + cuadro).
+// Acceso: el admin siempre; un usuario solo si YA envió la suya.
+app.get('/api/participant/:id', requireAuth, (req, res) => {
+  if (!req.session.isAdmin) {
+    const mine = getPrediction(req.session.userId);
+    if (!mine.submitted) return res.status(403).json({ error: 'Primero debes enviar tu propia quiniela para ver las de los demás.' });
+  }
+  const id = parseInt(req.params.id);
+  const u = db.prepare('SELECT id, display_name, is_admin FROM users WHERE id = ?').get(id);
+  if (!u || u.is_admin) return res.status(404).json({ error: 'Participante no encontrado.' });
+
+  const pred = getPrediction(id);
+  const st = engine.standingsFrom(pred.scores);
+  const pruned = pruneInvalidPicks(st, pred.bracketPicks);
+  const bb = bracket.buildBracket(st, st.qualifiedThirds, pruned.picks);
+  const real = getResults();
+  const sc = engine.scoreUser(pred, real);
+
+  res.json({
+    displayName: u.display_name,
+    submitted: pred.submitted, submittedAt: pred.submitted_at,
+    scores: pred.scores,
+    allTables: st.allTables, qualifiedThirds: st.qualifiedThirds,
+    matches: bb.matches, picks: pruned.picks,
+    score: {
+      total: sc.total, groupPoints: sc.groupPoints, koPoints: sc.koPoints, championBonus: sc.championBonus,
+      exactCount: sc.exactCount, correctResultCount: sc.correctResultCount,
+      correctQualifiers: sc.correctQualifiers, qualifiersScored: sc.qualifiersScored, championHit: sc.championHit,
+    },
+  });
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

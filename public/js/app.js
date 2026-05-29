@@ -100,38 +100,79 @@ async function doLogin() {
 }
 
 // ─── RANKING ──────────────────────────────────────────────────────────────────
+let RANK = { rows: [], canView: false };
 async function renderRanking(main) {
   main.innerHTML = `<div class="page-head"><div><h1>Tabla de Posiciones</h1><div class="sub">Se actualiza con cada resultado que registra el admin</div></div></div><div id="rk">Cargando…</div>`;
   try {
     const d = await api('GET','/api/ranking');
     const r = d.ranking;
+    RANK.rows = r;
+    RANK.canView = d.viewerIsAdmin || !!d.meSubmitted;
     let html = `<div class="stats">
       <div class="stat accent"><div class="lbl">Participantes</div><div class="val">${r.length}</div></div>
       <div class="stat"><div class="lbl">Partidos jugados</div><div class="val">${d.playedMatches}<span style="font-size:1rem;color:var(--muted)">/${d.totalMatches}</span></div></div>
       <div class="stat"><div class="lbl">Líder</div><div class="val" style="font-size:1.2rem">${r[0]?esc(r[0].displayName):'—'}</div></div>
       <div class="stat"><div class="lbl">Fase grupos</div><div class="val" style="font-size:1.1rem">${d.groupStageComplete?'Completa':'En curso'}</div></div>
     </div>`;
+
+    if (!RANK.canView) {
+      html += `<div class="banner banner-info"><span class="ico">🔒</span><div>Para ver la quiniela de los demás participantes, primero <b>envía tu propia quiniela</b> (grupos + cuadro).</div></div>`;
+    }
+
     if (!r.length) {
       html += `<div class="card card-pad"><div class="empty"><div class="ico">👥</div><h3>Sin participantes todavía</h3><p>El admin debe crear los usuarios.</p></div></div>`;
     } else {
-      html += `<div class="card" style="overflow:hidden"><table class="rank-table"><thead><tr>
-        <th>#</th><th>Participante</th><th>Total</th><th>Grupos</th><th>Elim.</th><th>Exactos</th><th>Estado</th>
+      // Tabla (escritorio)
+      html += `<div class="card rank-card"><table class="rank-table"><thead><tr>
+        <th>#</th><th>Participante</th><th class="num">Total</th><th class="num">Grupos</th><th class="num">Elim.</th>
+        <th class="num">Exactos</th><th class="num">Result.</th><th>Estado</th><th></th>
       </tr></thead><tbody>`;
       r.forEach((u,i) => {
         const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
         const ko = (u.koPoints||0) + (u.championBonus||0);
+        const viewBtn = RANK.canView
+          ? `<button class="btn btn-ghost btn-xs" onclick="viewParticipant(${u.userId})">Ver</button>`
+          : `<button class="btn btn-ghost btn-xs" disabled title="Envía tu quiniela primero">Ver</button>`;
         html += `<tr>
           <td class="pos p${i+1}">${medal||(i+1)}</td>
           <td class="name">${esc(u.displayName)} ${u.championHit?'🏆':''}</td>
-          <td><span class="pts">${u.total}</span></td>
-          <td>${u.groupPoints}</td>
-          <td>${ko>0?`<span class="chip chip-green">${ko}</span>`:`<span class="chip chip-gray">—</span>`}</td>
-          <td><span class="chip chip-yellow">✓ ${u.exactCount}</span></td>
+          <td class="num"><span class="pts">${u.total}</span></td>
+          <td class="num">${u.groupPoints}</td>
+          <td class="num">${ko>0?`<span class="chip chip-green">${ko}</span>`:`<span class="chip chip-gray">—</span>`}</td>
+          <td class="num"><span class="chip chip-yellow">✓ ${u.exactCount}</span></td>
+          <td class="num"><span class="chip chip-blue">${u.correctResultCount}</span></td>
           <td>${u.submitted?`<span class="chip chip-green">Enviada</span>`:`<span class="chip chip-red">Pendiente</span>`}</td>
+          <td class="num">${viewBtn}</td>
         </tr>`;
       });
-      html += `</tbody></table></div>
-      <p class="bracket-note" style="margin-top:.9rem"><b>Grupos:</b> 5 exacto · 2 resultado · 0 fallo. <b>Eliminatorias</b> (por equipo que acertaste que avanza): clasificar a 16avos 4 · octavos 4 · cuartos 4 · semis 6 · final 6 · <b>campeón +15</b>. Desempate: más marcadores exactos.</p>`;
+      html += `</tbody></table></div>`;
+
+      // Tarjetas (móvil)
+      html += `<div class="rank-cards">`;
+      r.forEach((u,i) => {
+        const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;
+        const ko = (u.koPoints||0) + (u.championBonus||0);
+        const viewBtn = RANK.canView
+          ? `<button class="btn btn-ghost btn-xs" onclick="viewParticipant(${u.userId})">Ver quiniela</button>`
+          : `<button class="btn btn-ghost btn-xs" disabled>🔒 Ver</button>`;
+        html += `<div class="rc">
+          <div class="rc-top">
+            <div class="rc-pos">${medal}</div>
+            <div class="rc-name">${esc(u.displayName)} ${u.championHit?'🏆':''}<div class="rc-state">${u.submitted?'<span class="chip chip-green">Enviada</span>':'<span class="chip chip-red">Pendiente</span>'}</div></div>
+            <div class="rc-total"><span class="pts">${u.total}</span><span class="rc-tlbl">pts</span></div>
+          </div>
+          <div class="rc-grid">
+            <div><span>Grupos</span><b>${u.groupPoints}</b></div>
+            <div><span>Elim.</span><b>${ko||'—'}</b></div>
+            <div><span>Exactos</span><b>${u.exactCount}</b></div>
+            <div><span>Result.</span><b>${u.correctResultCount}</b></div>
+          </div>
+          <div class="rc-foot">${viewBtn}</div>
+        </div>`;
+      });
+      html += `</div>`;
+
+      html += `<p class="bracket-note" style="margin-top:.9rem"><b>Grupos:</b> 5 exacto · 2 resultado (ganador correcto sin marcador) · 0 fallo. <b>Eliminatorias</b> (por equipo que acertaste que avanza): 16avos 4 · octavos 4 · cuartos 4 · semis 6 · final 6 · <b>campeón +15</b>. Desempate: más marcadores exactos.</p>`;
     }
     document.getElementById('rk').innerHTML = html;
   } catch(e){ document.getElementById('rk').innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`; }
@@ -139,6 +180,92 @@ async function renderRanking(main) {
 
 // ─── MI QUINIELA ───────────────────────────────────────────────────────────────
 function filledCount(){ return S.meta.matches.filter(m=>{const s=S.pred.scores[m.key];return s&&Number.isInteger(s.a)&&Number.isInteger(s.b);}).length; }
+
+// ─── VER QUINIELA DE UN PARTICIPANTE (modal) ──────────────────────────────────
+async function viewParticipant(id) {
+  let ov = document.getElementById('pv-overlay');
+  if (!ov) {
+    ov = document.createElement('div'); ov.id='pv-overlay'; ov.className='pv-overlay';
+    ov.addEventListener('click', e => { if (e.target===ov) closeParticipant(); });
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div class="pv-modal"><div class="pv-loading">Cargando quiniela…</div></div>`;
+  ov.classList.add('open');
+  try {
+    const d = await api('GET', `/api/participant/${id}`);
+    PV = d; PV.tab = 'grupos';
+    drawParticipant();
+  } catch(e) {
+    ov.querySelector('.pv-modal').innerHTML = `<div class="pv-head"><h2>No disponible</h2><button class="pv-x" onclick="closeParticipant()">✕</button></div><div class="pv-body"><div class="alert alert-error">${esc(e.message)}</div></div>`;
+  }
+}
+function closeParticipant(){ const ov=document.getElementById('pv-overlay'); if(ov) ov.classList.remove('open'); }
+let PV = null;
+function setPvTab(t){ PV.tab=t; drawParticipant(); }
+
+function drawParticipant() {
+  const ov = document.getElementById('pv-overlay'); if(!ov) return;
+  const s = PV.score || {};
+  const ko = (s.koPoints||0)+(s.championBonus||0);
+  const head = `<div class="pv-head">
+      <div><div class="pv-kick">Quiniela de</div><h2>${esc(PV.displayName)} ${s.championHit?'🏆':''}</h2></div>
+      <button class="pv-x" onclick="closeParticipant()">✕</button>
+    </div>
+    <div class="pv-score">
+      <div class="pvs"><span>${s.total||0}</span><small>Total</small></div>
+      <div class="pvs"><span>${s.groupPoints||0}</span><small>Grupos</small></div>
+      <div class="pvs"><span>${ko||0}</span><small>Elim.</small></div>
+      <div class="pvs"><span>${s.exactCount||0}</span><small>Exactos</small></div>
+      <div class="pvs"><span>${s.correctResultCount||0}</span><small>Result.</small></div>
+    </div>
+    <div class="pv-tabs">
+      <button class="pv-tab ${PV.tab==='grupos'?'active':''}" onclick="setPvTab('grupos')">⚽ Grupos</button>
+      <button class="pv-tab ${PV.tab==='bracket'?'active':''}" onclick="setPvTab('bracket')">🗺️ Cuadro</button>
+    </div>`;
+  const body = PV.tab==='grupos' ? pvGroupsHTML() : pvBracketHTML();
+  ov.querySelector('.pv-modal').innerHTML = head + `<div class="pv-body">${PV.submitted?'':'<div class="banner banner-info" style="margin-bottom:1rem"><span class="ico">✏️</span><div>Esta quiniela aún es un borrador (no enviada).</div></div>'}${body}</div>`;
+}
+
+function pvGroupsHTML() {
+  let html = `<div class="pv-groups">`;
+  for (const g of GROUP_ORDER) {
+    const gms = S.meta.matches.filter(m=>m.group===g);
+    html += `<div class="pv-gblock"><div class="group-title" style="margin-bottom:.4rem"><span class="group-badge">${g}</span><span class="gname">Grupo ${g}</span></div>`;
+    for (const m of gms) {
+      const sc = PV.scores[m.key]; const has = sc && Number.isInteger(sc.a)&&Number.isInteger(sc.b);
+      html += `<div class="pv-match">
+        <span class="pvm-t r">${esc(tn(m.team1))} ${fl(m.team1)}</span>
+        <span class="pvm-s">${has?`${sc.a}-${sc.b}`:'—'}</span>
+        <span class="pvm-t">${fl(m.team2)} ${esc(tn(m.team2))}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+  return html + `</div>`;
+}
+
+function pvBracketHTML() {
+  const rounds = S.meta.bracket.rounds, labels = S.meta.bracket.roundLabel;
+  const seq = ['R32','R16','QF','SF','FINAL'];
+  const champ = PV.picks[104];
+  let html = `<div class="pv-bracket">`;
+  for (const r of seq) {
+    html += `<div class="pv-round"><div class="pv-rlabel">${labels[r]}</div><div class="pv-ties">`;
+    for (const id of rounds[r]) {
+      const m = PV.matches[id]; const pick = PV.picks[id];
+      const side = (team) => {
+        if (!team) return `<div class="pv-side tbd">Por definir</div>`;
+        const sel = pick && pick===team;
+        return `<div class="pv-side ${sel?'win':''}">${fl(team)} <span>${esc(tn(team))}</span>${sel?'<b>✓</b>':''}</div>`;
+      };
+      html += `<div class="pv-tie">${side(m?m.team1:null)}${side(m?m.team2:null)}</div>`;
+    }
+    html += `</div></div>`;
+  }
+  html += `</div>`;
+  if (champ) html += `<div class="champ-card" style="margin-top:1rem"><div class="lbl">🏆 Campeón</div><div class="team">${fl(champ)} ${esc(tn(champ))}</div></div>`;
+  return html;
+}
 
 function renderQuiniela(main) {
   const locked = !!S.pred.submitted;
@@ -560,4 +687,5 @@ window.setAdminTab=setAdminTab; window.createUser=createUser; window.delUser=del
 window.resetPass=resetPass; window.unlock=unlock; window.saveResults=saveResults;
 window.setKoRound=setKoRound; window.pickWinner=pickWinner;
 window.toggleKO=toggleKO; window.saveKO=saveKO;
+window.viewParticipant=viewParticipant; window.closeParticipant=closeParticipant; window.setPvTab=setPvTab;
 init();
