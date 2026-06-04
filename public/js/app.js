@@ -55,7 +55,7 @@ function nav() {
   <div class="dhl-stripe"></div>
   <nav><div class="nav-inner">
     <div class="brand"><span class="brand-logo">DHL</span><span class="brand-sub">Quiniela Mundial 2026</span></div>
-    <div class="nav-links">
+    <div class="nav-links" id="mainNav">
       ${link('ranking','🏆 Ranking')}
       ${!S.user.isAdmin ? link('quiniela','📋 Mi Quiniela') : ''}
       ${link('resultados','⚽ Resultados')}

@@ -309,12 +309,37 @@ input[type=text]:focus,input[type=password]:focus{outline:none;border-color:var(
 .modal .mf{display:flex;gap:10px;justify-content:flex-end;padding:0 1.4rem 1.4rem}
 
 @media(max-width:720px){
-  .nav-links{display:none}
+  .nav-links{
+    display:flex;
+    position:fixed;
+    bottom:0;left:0;right:0;
+    z-index:60;
+    background:var(--dhl-yellow);
+    gap:0;
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));
+    box-shadow:0 -2px 10px rgba(0,0,0,.12);
+    justify-content:space-around;
+  }
+  .nav-link{
+    flex:1;
+    font-size:.72rem;
+    padding:7px 4px;
+    border-radius:12px;
+    text-align:center;
+    line-height:1.15;
+  }
+  .nav-link.active{background:var(--dhl-red);color:#fff}
+  .brand-sub{display:none}
+  .nav-user{max-width:90px}
+  /* deja espacio para que la barra inferior no tape contenido ni el footer */
+  .app-footer{margin-bottom:4.5rem}
+  /* las barras de guardar/enviar flotan por encima de la nav inferior */
+  .savebar{bottom:4.7rem}
   .stats{grid-template-columns:1fr 1fr}
   .r32-grid{grid-template-columns:1fr}
   .form-grid{grid-template-columns:1fr 1fr}
   .page-head h1{font-size:1.6rem}
-  main{padding:1.25rem .9rem 4rem}
+  main{padding:1.25rem .9rem 5.5rem}
   .team .tn{font-size:.82rem}
   .rank-card{display:none}
   .rank-cards{display:flex}
