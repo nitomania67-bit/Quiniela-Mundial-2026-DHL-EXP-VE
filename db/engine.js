@@ -20,10 +20,17 @@ function computeGroupTable(groupCode, scores) {
   for (let i = 0; i < teams.length; i++) {
     for (let j = i + 1; j < teams.length; j++) {
       const t1 = teams[i], t2 = teams[j];
-      const key = `${t1}-${t2}`;
-      const s = scores[key];
-      if (!s || s.a == null || s.b == null) continue;
-      const a = Number(s.a), b = Number(s.b);
+      // El marcador pudo guardarse como "t1-t2" o "t2-t1": buscar ambos órdenes.
+      const directKey = `${t1}-${t2}`, reverseKey = `${t2}-${t1}`;
+      let a, b; // goles de t1 y t2 respectivamente
+      if (scores[directKey] && scores[directKey].a != null && scores[directKey].b != null) {
+        a = Number(scores[directKey].a); b = Number(scores[directKey].b);
+      } else if (scores[reverseKey] && scores[reverseKey].a != null && scores[reverseKey].b != null) {
+        // Guardado al revés: a=goles de t2, b=goles de t1 → invertir
+        a = Number(scores[reverseKey].b); b = Number(scores[reverseKey].a);
+      } else {
+        continue; // partido sin cargar
+      }
       stats[t1].gf += a; stats[t1].gc += b; stats[t1].pj++;
       stats[t2].gf += b; stats[t2].gc += a; stats[t2].pj++;
       if (a > b) { stats[t1].pts += 3; }

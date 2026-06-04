@@ -73,3 +73,41 @@ const s7 = randomScores();
 const r1 = JSON.stringify(engine.computeQualifiers(s7).qualifiers.map(q=>q.team).sort());
 const r2 = JSON.stringify(engine.computeQualifiers(s7).qualifiers.map(q=>q.team).sort());
 console.log('TEST 7 - determinismo:', r1 === r2 ? 'OK' : 'FALLO');
+
+// TEST 8: REGRESIÓN — la tabla debe contar TODOS los partidos aunque la clave
+// se haya guardado en orden invertido (t2-t1). Antes este bug omitía partidos
+// (incluidos empates), dando puntos y PJ incorrectos.
+let t8fail = 0;
+for (let trial = 0; trial < 100; trial++) {
+  const matches = buildGroupMatches();
+  const scoresNorm = {}, scoresFlip = {};
+  for (const m of matches) {
+    const a = Math.floor(Math.random()*5), b = Math.floor(Math.random()*5);
+    scoresNorm[`${m.team1}-${m.team2}`] = { a, b };
+    // mismo resultado pero clave invertida
+    scoresFlip[`${m.team2}-${m.team1}`] = { a: b, b: a };
+  }
+  for (const g of Object.keys(GROUPS)) {
+    const tN = engine.computeGroupTable(g, scoresNorm);
+    const tF = engine.computeGroupTable(g, scoresFlip);
+    // cada equipo debe tener PJ=3 y los mismos puntos en ambos órdenes
+    for (const row of tN) if (row.pj !== 3) t8fail++;
+    const mapN = Object.fromEntries(tN.map(r=>[r.team,r.pts]));
+    const mapF = Object.fromEntries(tF.map(r=>[r.team,r.pts]));
+    for (const t of Object.keys(mapN)) if (mapN[t] !== mapF[t]) t8fail++;
+    // suma de PJ del grupo debe ser 12
+    if (tN.reduce((s,r)=>s+r.pj,0) !== 12) t8fail++;
+  }
+}
+console.log('TEST 8 - claves en cualquier orden + PJ correcto:', t8fail === 0 ? 'OK' : `FALLO (${t8fail})`);
+
+// TEST 9: caso real del Grupo A reportado (empates deben sumar 1 punto)
+const gA = {
+  'MEX-RSA': {a:4,b:3}, 'KOR-CZE': {a:3,b:5}, 'MEX-KOR': {a:35,b:6},
+  'CZE-RSA': {a:4,b:4}, 'CZE-MEX': {a:3,b:3}, 'RSA-KOR': {a:1,b:2},
+};
+const tA = engine.computeGroupTable('A', gA);
+const ptsA = Object.fromEntries(tA.map(r=>[r.team,r.pts]));
+const expA = { MEX:7, CZE:5, KOR:3, RSA:1 };
+const okA = Object.keys(expA).every(t=>ptsA[t]===expA[t]);
+console.log('TEST 9 - Grupo A real (MEX7/CZE5/KOR3/RSA1):', okA ? 'OK' : `FALLO ${JSON.stringify(ptsA)}`);
