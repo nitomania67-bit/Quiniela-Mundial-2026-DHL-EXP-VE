@@ -245,24 +245,21 @@ function pvGroupsHTML() {
 }
 
 function pvBracketHTML() {
-  const rounds = S.meta.bracket.rounds, labels = S.meta.bracket.roundLabel;
-  const seq = ['R32','R16','QF','SF','FINAL'];
+  const B = S.meta.bracket;
   const champ = PV.picks[104];
-  let html = `<div class="pv-bracket">`;
-  for (const r of seq) {
-    html += `<div class="pv-round"><div class="pv-rlabel">${labels[r]}</div><div class="pv-ties">`;
-    for (const id of rounds[r]) {
+  const cols = SEQ.map(round => {
+    const ties = B.rounds[round].map(id => {
       const m = PV.matches[id]; const pick = PV.picks[id];
-      const side = (team) => {
-        if (!team) return `<div class="pv-side tbd">Por definir</div>`;
-        const sel = pick && pick===team;
-        return `<div class="pv-side ${sel?'win':''}">${fl(team)} <span>${esc(tn(team))}</span>${sel?'<b>✓</b>':''}</div>`;
+      const seat = (team) => {
+        if (!team) return `<div class="seat tbd"><span class="seat-flag">·</span><span class="seat-nm">Por definir</span></div>`;
+        const sel = pick === team;
+        return `<div class="seat ${sel?'win':''}"><span class="seat-flag">${fl(team)}</span><span class="seat-nm">${esc(tn(team))}</span></div>`;
       };
-      html += `<div class="pv-tie">${side(m?m.team1:null)}${side(m?m.team2:null)}</div>`;
-    }
-    html += `</div></div>`;
-  }
-  html += `</div>`;
+      return `<div class="br-tie">${seat(m?m.team1:null)}${seat(m?m.team2:null)}</div>`;
+    }).join('');
+    return `<div class="br-col br-${round}"><div class="br-col-label">${B.roundLabel[round]}</div><div class="br-col-body">${ties}</div></div>`;
+  }).join('');
+  let html = `<div class="bracket-scroll"><div class="bracket-tree">${cols}</div></div>`;
   if (champ) html += `<div class="champ-card" style="margin-top:1rem"><div class="lbl">🏆 Campeón</div><div class="team">${fl(champ)} ${esc(tn(champ))}</div></div>`;
   return html;
 }
@@ -360,6 +357,7 @@ async function submitQuiniela() {
   if (filledCount() < 72) { toast(`Faltan ${72-filledCount()} partidos de grupos`, 'err'); setSub('grupos'); return; }
   if (!bracketIsComplete()) { toast('Completa tu cuadro eliminatorio', 'err'); setSub('bracket'); return; }
   if (!confirm('¿Enviar tu quiniela completa (grupos + cuadro)? Quedará BLOQUEADA.')) return;
+  clearTimeout(saveTimer); savePending = false; // evitar guardado duplicado en segundo plano
   try {
     await api('PUT','/api/prediction',{scores:S.pred.scores,bracketPicks:S.pred.bracketPicks});
     await api('POST','/api/prediction/submit',{scores:S.pred.scores,bracketPicks:S.pred.bracketPicks});
@@ -389,107 +387,187 @@ async function renderMyTables(body) {
   }
 }
 
-// ─── MI CUADRO (pickable) ────────────────────────────────────────────────────
-let BR = null; // cache del cuadro del usuario
+// ─── MOTOR DE BRACKET EN EL CLIENTE ───────────────────────────────────────────
+// Réplica de la lógica del servidor: arma el cuadro desde standings + picks,
+// instantáneamente y sin llamadas de red. El guardado va en segundo plano.
+
+// Asigna los 8 mejores terceros a las 8 llaves evitando repetir grupo (backtracking).
+function clientAssignThirds(qualifiedThirds) {
+  const B = S.meta.bracket;
+  const slots = B.thirdSlotOrder;
+  const used = new Array(qualifiedThirds.length).fill(false);
+  const result = {};
+  function bt(i) {
+    if (i === slots.length) return true;
+    const wGroup = B.thirdSlotWinnerGroup[slots[i]];
+    for (let k = 0; k < qualifiedThirds.length; k++) {
+      if (used[k]) continue;
+      if (B.teamGroup[qualifiedThirds[k]] === wGroup) continue;
+      used[k] = true; result[slots[i]] = qualifiedThirds[k];
+      if (bt(i + 1)) return true;
+      used[k] = false; delete result[slots[i]];
+    }
+    return false;
+  }
+  if (!bt(0)) slots.forEach((s, i) => { result[s] = qualifiedThirds[i] || null; });
+  return result;
+}
+
+// Construye matches {id:{team1,team2}} desde standings + picks (igual que el server).
+function clientBuildBracket(standings, qualifiedThirds, picks) {
+  const B = S.meta.bracket;
+  const thirdAssign = clientAssignThirds(qualifiedThirds || []);
+  const matches = {};
+  const resolveSlot = (slot, slotId) => {
+    if (slot === 'T') return thirdAssign[slotId] || null;
+    const pos = slot[0], g = slot[1];
+    if (pos === '1') return standings.winners[g] || null;
+    if (pos === '2') return standings.runners[g] || null;
+    return null;
+  };
+  for (const id of B.rounds.R32) {
+    const [s1, s2] = B.r32[id];
+    matches[id] = { team1: resolveSlot(s1, id), team2: resolveSlot(s2, id) };
+  }
+  const later = [...B.rounds.R16, ...B.rounds.QF, ...B.rounds.SF, ...B.rounds.THIRD, ...B.rounds.FINAL];
+  const resolveFeed = (token) => {
+    const kind = token[0], id = parseInt(token.slice(1));
+    if (kind === 'W') return picks[id] || null;
+    if (kind === 'L') {
+      const m = matches[id], w = picks[id];
+      if (!m || !w || !m.team1 || !m.team2) return null;
+      return m.team1 === w ? m.team2 : m.team1;
+    }
+    return null;
+  };
+  for (const id of later) {
+    const [a, b] = B.feeds[id];
+    matches[id] = { team1: resolveFeed(a), team2: resolveFeed(b) };
+  }
+  return matches;
+}
+
+// Elimina picks que ya no correspondan a su llave (tras cambiar un ganador previo).
+function clientPrune(standings, qualifiedThirds, picks) {
+  const B = S.meta.bracket;
+  const order = [...B.rounds.R32, ...B.rounds.R16, ...B.rounds.QF, ...B.rounds.SF, ...B.rounds.THIRD, ...B.rounds.FINAL];
+  const clean = {};
+  for (const id of order) {
+    const m = clientBuildBracket(standings, qualifiedThirds, clean)[id];
+    const p = picks[id];
+    if (p && m && (p === m.team1 || p === m.team2)) clean[id] = p;
+  }
+  return clean;
+}
+
+// ─── MI CUADRO (árbol pickable) ───────────────────────────────────────────────
+let BR = { standings: null, qualifiedThirds: [], matches: {} };
+
 async function renderMyBracket(body) {
   if (filledCount() < 72) {
     body.innerHTML = `<div class="banner banner-info"><span class="ico">📋</span><div>Primero completa los <b>72 partidos de grupos</b>. Tu cuadro se arma automáticamente con esos resultados.</div></div>`;
     return;
   }
-  body.innerHTML = `<div id="brwrap">Calculando tu cuadro…</div>`;
-  await loadBracket();
-  drawBracket();
-}
-
-async function loadBracket() {
-  // Construir el cuadro en el cliente desde el servidor (resuelve equipos + aplica picks)
+  body.innerHTML = `<div id="brwrap" class="muted">Calculando tu cuadro…</div>`;
+  // Una sola llamada para obtener standings + terceros (la estructura ya viene en meta)
   const d = await api('GET','/api/prediction/bracket');
-  BR = d; // { matches, picks, ... }
+  BR.standings = { winners:{}, runners:{} };
+  for (const g of GROUP_ORDER){ BR.standings.winners[g]=d.allTables[g][0].team; BR.standings.runners[g]=d.allTables[g][1].team; }
+  BR.qualifiedThirds = d.qualifiedThirds;
+  // Poda los picks guardados por si los grupos cambiaron, y recalcula
+  S.pred.bracketPicks = clientPrune(BR.standings, BR.qualifiedThirds, d.picks || S.pred.bracketPicks || {});
+  recomputeBracket();
+  drawBracketTree();
 }
 
-function drawBracket() {
+function recomputeBracket() {
+  BR.matches = clientBuildBracket(BR.standings, BR.qualifiedThirds, S.pred.bracketPicks);
+}
+
+const SEQ = ['R32','R16','QF','SF','FINAL'];
+
+function drawBracketTree() {
   const wrap = document.getElementById('brwrap'); if(!wrap) return;
   const locked = !!S.pred.submitted;
-  const rounds = S.meta.bracket.rounds;
-  const labels = S.meta.bracket.roundLabel;
-  const seq = ['R32','R16','QF','SF','FINAL'];
-
-  // botones de ronda
-  const roundDone = r => rounds[r].every(id => !!S.pred.bracketPicks[id]);
-  const btns = seq.map(r => `<button class="ko-round-btn ${S.koRound===r?'active':''} ${roundDone(r)?'done':''}" onclick="setKoRound('${r}')"><span class="dot"></span>${labels[r]}</button>`).join('');
-
-  const totalReq = seq.reduce((n,r)=>n+rounds[r].length,0);
-  const done = seq.reduce((n,r)=>n+rounds[r].filter(id=>S.pred.bracketPicks[id]).length,0);
-
-  let html = `<div class="bracket-note">Elige al ganador de cada llave; avanza a la siguiente ronda automáticamente. La colocación de los terceros es ilustrativa y <b>no afecta tus puntos</b> (se premia acertar qué equipos llegan a cada ronda).</div>
-    <div class="ko-rounds">${btns}</div>
-    <div class="ko-progress">Elecciones: <b>${done}</b>/${totalReq}</div>
-    <div id="ties" class="ties-col"></div>`;
-
-  // campeón
+  const B = S.meta.bracket;
+  const totalReq = SEQ.reduce((n,r)=>n+B.rounds[r].length,0);
+  const done = SEQ.reduce((n,r)=>n+B.rounds[r].filter(id=>S.pred.bracketPicks[id]).length,0);
   const champ = S.pred.bracketPicks[104];
-  if (S.koRound==='FINAL' && champ) {
-    html += `<div class="champ-card"><div class="lbl">🏆 Tu campeón del mundo</div><div class="team">${fl(champ)} ${esc(tn(champ))}</div></div>`;
-  }
+
+  let html = `<div class="bracket-note">Elige al ganador de cada llave tocándolo; avanza solo a la siguiente ronda. La colocación de terceros es ilustrativa y <b>no afecta tus puntos</b>.</div>
+    <div class="ko-progress">Elecciones: <b id="koDone">${done}</b>/${totalReq} ${champ?`· 🏆 Campeón: <b>${esc(tn(champ))}</b>`:''}</div>
+    <div class="bracket-scroll"><div class="bracket-tree" id="tree">${treeHTML(locked)}</div></div>`;
   if (!locked) {
     html += `<div class="savebar"><div class="inner">
-      <span class="count">Cuadro <b>${done}</b>/${totalReq}</span>
-      <button class="btn btn-ghost btn-sm" onclick="saveDraft()">Guardar</button>
+      <span class="count">Cuadro <b id="koDone2">${done}</b>/${totalReq}</span>
+      <span class="save-state" id="saveState"></span>
       <button class="btn btn-yellow btn-sm" onclick="submitQuiniela()">🔒 Enviar definitiva</button>
     </div></div>`;
   }
+  wrap.className = '';
   wrap.innerHTML = html;
-  drawTies();
 }
 
-function setKoRound(r){ S.koRound=r; drawBracket(); }
-
-function drawTies() {
-  const cont = document.getElementById('ties'); if(!cont) return;
-  const locked = !!S.pred.submitted;
-  const ids = S.meta.bracket.rounds[S.koRound];
-  const labels = S.meta.bracket.roundLabel;
-  cont.innerHTML = '';
-  ids.forEach((id, i) => {
-    const m = BR.matches[id];
-    const t1 = m.team1, t2 = m.team2;
-    const pick = S.pred.bracketPicks[id];
-    const tie = document.createElement('div'); tie.className='tie2';
-    const sideBtn = (team, which) => {
-      const known = !!team;
-      const sel = pick && pick===team;
-      return `<button class="pick ${sel?'sel':''}" ${(!known||locked)?'disabled':''} onclick="pickWinner(${id},'${team||''}')">
-        <span class="flag">${known?fl(team):'⬜'}</span>
-        <span class="nm ${known?'':'tbd'}">${known?esc(tn(team)):'Por definir'}</span>
-        <span class="chk">${sel?'✓':''}</span>
-      </button>`;
-    };
-    tie.innerHTML = `<div class="h"><span>${labels[S.koRound]} · ${i+1}</span><span>#${id}</span></div>${sideBtn(t1)}${sideBtn(t2)}`;
-    cont.appendChild(tie);
-  });
+// Genera las columnas del árbol (16avos → final) con conexiones.
+function treeHTML(locked) {
+  const B = S.meta.bracket;
+  // columnas: R32(16), R16(8), QF(4), SF(2), FINAL(1)
+  return SEQ.map(round => {
+    const ids = B.rounds[round];
+    const ties = ids.map(id => tieHTML(id, round, locked)).join('');
+    return `<div class="br-col br-${round}">
+      <div class="br-col-label">${B.roundLabel[round]}</div>
+      <div class="br-col-body">${ties}</div>
+    </div>`;
+  }).join('');
 }
 
-async function pickWinner(matchId, team) {
+function tieHTML(id, round, locked) {
+  const m = BR.matches[id];
+  const pick = S.pred.bracketPicks[id];
+  const seat = (team) => {
+    if (!team) return `<div class="seat tbd"><span class="seat-flag">·</span><span class="seat-nm">Por definir</span></div>`;
+    const sel = pick === team;
+    const dis = locked ? 'disabled' : '';
+    return `<button class="seat ${sel?'win':''}" ${dis} onclick="pick(${id},'${team}')">
+      <span class="seat-flag">${fl(team)}</span><span class="seat-nm">${esc(tn(team))}</span>
+    </button>`;
+  };
+  return `<div class="br-tie" data-id="${id}">${seat(m.team1)}${seat(m.team2)}</div>`;
+}
+
+// ── Selección instantánea + guardado en segundo plano ──
+function pick(matchId, team) {
   if (!team || S.pred.submitted) return;
-  // Si cambia el ganador, limpiar picks aguas abajo que dependían del anterior
-  if (S.pred.bracketPicks[matchId] !== team) {
-    S.pred.bracketPicks[matchId] = team;
-    clearDownstream();
-  }
-  // Recalcular el cuadro con los picks actuales
-  try {
-    await api('PUT','/api/prediction',{bracketPicks:S.pred.bracketPicks});
-    await loadBracket();
-    drawBracket();
-  } catch(e){ toast(e.message,'err'); }
+  if (S.pred.bracketPicks[matchId] === team) return; // sin cambios
+  S.pred.bracketPicks[matchId] = team;
+  // Poda aguas abajo y recalcula equipos de rondas siguientes (instantáneo)
+  S.pred.bracketPicks = clientPrune(BR.standings, BR.qualifiedThirds, S.pred.bracketPicks);
+  recomputeBracket();
+  drawBracketTree();         // redibujo inmediato
+  scheduleSave();            // guardar sin bloquear
 }
 
-// Limpia rondas posteriores cuando cambia un resultado (se vuelven inválidas)
-function clearDownstream() {
-  // Estrategia simple y segura: revalidar tras recargar el cuadro del server.
-  // El server reconstruye; aquí solo quitamos picks de equipos que ya no existan en su llave.
-  // (loadBracket + drawBracket re-renderiza; las llaves sin equipos quedan deshabilitadas)
+// Guardado con "debounce": agrupa cambios rápidos en una sola petición.
+let saveTimer = null, savePending = false;
+function scheduleSave() {
+  savePending = true;
+  setSaveState('Guardando…');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, 700);
 }
+async function flushSave() {
+  if (!savePending) return;
+  savePending = false;
+  try {
+    await api('PUT','/api/prediction',{scores:S.pred.scores, bracketPicks:S.pred.bracketPicks});
+    setSaveState('Guardado ✓');
+  } catch(e) {
+    savePending = true;
+    setSaveState('Error al guardar');
+  }
+}
+function setSaveState(txt){ const el=document.getElementById('saveState'); if(el) el.textContent=txt; }
 
 // ─── RESULTADOS (oficiales) ─────────────────────────────────────────────────────
 async function renderResultados(main) {
@@ -685,7 +763,7 @@ window.go=go; window.logout=logout; window.doLogin=doLogin; window.setSub=setSub
 window.saveDraft=saveDraft; window.submitQuiniela=submitQuiniela;
 window.setAdminTab=setAdminTab; window.createUser=createUser; window.delUser=delUser;
 window.resetPass=resetPass; window.unlock=unlock; window.saveResults=saveResults;
-window.setKoRound=setKoRound; window.pickWinner=pickWinner;
+window.pick=pick;
 window.toggleKO=toggleKO; window.saveKO=saveKO;
 window.viewParticipant=viewParticipant; window.closeParticipant=closeParticipant; window.setPvTab=setPvTab;
 init();
