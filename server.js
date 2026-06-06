@@ -55,6 +55,7 @@ app.get('/api/meta', (req, res) => {
       r32: bracket.R32,
       thirdSlotWinnerGroup: bracket.THIRD_SLOT_WINNER_GROUP,
       thirdSlotOrder: bracket.THIRD_SLOT_ORDER,
+      thirdSlotAllowed: bracket.THIRD_SLOT_ALLOWED,
       teamGroup: bracket.TEAM_GROUP,
     },
   });
