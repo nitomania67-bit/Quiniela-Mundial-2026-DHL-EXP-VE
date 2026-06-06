@@ -391,25 +391,51 @@ async function renderMyTables(body) {
 // Réplica de la lógica del servidor: arma el cuadro desde standings + picks,
 // instantáneamente y sin llamadas de red. El guardado va en segundo plano.
 
-// Asigna los 8 mejores terceros a las 8 llaves evitando repetir grupo (backtracking).
+// Asigna los 8 mejores terceros respetando restricciones oficiales FIFA (Annex C).
 function clientAssignThirds(qualifiedThirds) {
   const B = S.meta.bracket;
   const slots = B.thirdSlotOrder;
   const used = new Array(qualifiedThirds.length).fill(false);
   const result = {};
-  function bt(i) {
-    if (i === slots.length) return true;
-    const wGroup = B.thirdSlotWinnerGroup[slots[i]];
-    for (let k = 0; k < qualifiedThirds.length; k++) {
-      if (used[k]) continue;
-      if (B.teamGroup[qualifiedThirds[k]] === wGroup) continue;
-      used[k] = true; result[slots[i]] = qualifiedThirds[k];
-      if (bt(i + 1)) return true;
-      used[k] = false; delete result[slots[i]];
+  function bt(placed) {
+    if (placed === slots.length) return true;
+    let bestSlot = null, bestCands = null;
+    for (const slotId of slots) {
+      if (result[slotId] !== undefined) continue;
+      const allowed = B.thirdSlotAllowed[slotId];
+      const cands = [];
+      for (let k = 0; k < qualifiedThirds.length; k++) {
+        if (used[k]) continue;
+        if (allowed.includes(B.teamGroup[qualifiedThirds[k]])) cands.push(k);
+      }
+      if (bestCands === null || cands.length < bestCands.length) { bestSlot = slotId; bestCands = cands; }
+    }
+    if (bestCands.length === 0) return false;
+    for (const k of bestCands) {
+      used[k] = true; result[bestSlot] = qualifiedThirds[k];
+      if (bt(placed + 1)) return true;
+      used[k] = false; delete result[bestSlot];
     }
     return false;
   }
-  if (!bt(0)) slots.forEach((s, i) => { result[s] = qualifiedThirds[i] || null; });
+  if (!bt(0)) {
+    // Fallback: no mismo grupo
+    const r2 = {}; const u2 = new Array(qualifiedThirds.length).fill(false);
+    function bt2(i) {
+      if (i === slots.length) return true;
+      const wG = B.thirdSlotWinnerGroup[slots[i]];
+      for (let k = 0; k < qualifiedThirds.length; k++) {
+        if (u2[k] || B.teamGroup[qualifiedThirds[k]] === wG) continue;
+        u2[k] = true; r2[slots[i]] = qualifiedThirds[k];
+        if (bt2(i + 1)) return true;
+        u2[k] = false; delete r2[slots[i]];
+      }
+      return false;
+    }
+    if (bt2(0)) return r2;
+    slots.forEach((s, i) => { r2[s] = qualifiedThirds[i] || null; });
+    return r2;
+  }
   return result;
 }
 
