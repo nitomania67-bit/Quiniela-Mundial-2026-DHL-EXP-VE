@@ -53,6 +53,9 @@ app.get('/api/meta', (req, res) => {
       roundLabel: bracket.ROUND_LABEL,
       feeds: bracket.FEEDS,
       r32: bracket.R32,
+      thirdSlotWinnerGroup: bracket.THIRD_SLOT_WINNER_GROUP,
+      thirdSlotOrder: bracket.THIRD_SLOT_ORDER,
+      teamGroup: bracket.TEAM_GROUP,
     },
   });
 });
