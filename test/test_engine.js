@@ -111,3 +111,26 @@ const ptsA = Object.fromEntries(tA.map(r=>[r.team,r.pts]));
 const expA = { MEX:7, CZE:5, KOR:3, RSA:1 };
 const okA = Object.keys(expA).every(t=>ptsA[t]===expA[t]);
 console.log('TEST 9 - Grupo A real (MEX7/CZE5/KOR3/RSA1):', okA ? 'OK' : `FALLO ${JSON.stringify(ptsA)}`);
+
+// TEST 10: DESEMPATE FIFA 2026 — el enfrentamiento directo va ANTES que la
+// diferencia de gol general. Dos equipos empatados a puntos: gana el que ganó
+// el head-to-head aunque tenga PEOR diferencia de gol general.
+// MEX y RSA empatan a 6 pts. RSA tiene PEOR DG pero le ganó a MEX en directo.
+const gTie = {
+  'CZE-MEX':{a:3,b:2},'RSA-KOR':{a:1,b:5},'CZE-RSA':{a:3,b:5},
+  'KOR-MEX':{a:1,b:2},'KOR-CZE':{a:3,b:4},'MEX-RSA':{a:1,b:2},
+};
+const tTie = engine.computeGroupTable('A', gTie);
+// RSA venció a CZE (5-3) y a MEX (2-1) en directo; debe quedar 1° pese a DG -1
+const okTie = tTie[0].team === 'RSA' && tTie[1].team === 'CZE';
+console.log('TEST 10 - H2H antes que DG general (RSA 1°, CZE 2°):', okTie ? 'OK' : `FALLO ${tTie.map(r=>r.team).join('>')}`);
+
+// TEST 11: ejemplo oficial FIFA (Francia/Australia): H2H empatado 1-1 → se
+// resuelve por DG GENERAL (Francia +2 > Australia +1). MEX=Fra, RSA=Aus.
+const gOff = {
+  'MEX-RSA':{a:1,b:1},'MEX-KOR':{a:2,b:0},'RSA-KOR':{a:3,b:2},
+  'CZE-MEX':{a:0,b:5},'KOR-CZE':{a:5,b:0},'CZE-RSA':{a:0,b:5},
+};
+const tOff = engine.computeGroupTable('A', gOff);
+const okOff = tOff[0].team === 'MEX' && tOff[1].team === 'RSA';
+console.log('TEST 11 - ejemplo oficial FIFA (DG general tras H2H empate):', okOff ? 'OK' : `FALLO ${tOff.map(r=>r.team).join('>')}`);
