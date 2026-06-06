@@ -40,33 +40,79 @@ function computeGroupTable(groupCode, scores) {
   }
   for (const t of teams) stats[t].dg = stats[t].gf - stats[t].gc;
 
-  const ordered = teams.map(t => stats[t]).sort((x, y) => compareTeams(x, y, scores));
+  const ordered = orderGroup(teams.map(t => stats[t]), scores);
   ordered.forEach((s, i) => s.pos = i + 1);
   return ordered;
 }
 
-// Comparador FIFA: pts → DG → GF → enfrentamiento directo → orden de grupo.
-function compareTeams(x, y, scores) {
-  if (y.pts !== x.pts) return y.pts - x.pts;
-  if (y.dg !== x.dg) return y.dg - x.dg;
-  if (y.gf !== x.gf) return y.gf - x.gf;
-  // Enfrentamiento directo entre los dos
-  const h2h = headToHead(x.team, y.team, scores);
-  if (h2h !== 0) return h2h;
-  // Desempate determinista final por orden alfabético de equipo (estable)
-  return x.team < y.team ? -1 : 1;
+// ── Ordenamiento de un grupo con los desempates OFICIALES FIFA 2026 ───────────
+// Orden: 1) Puntos. Entre los EMPATADOS en puntos se aplica un "mini-grupo" solo
+// con los partidos entre ellos: 2) puntos h2h, 3) DG h2h, 4) GF h2h. Si aún hay
+// empate, criterios generales: 5) DG total, 6) GF total. Último recurso
+// determinista: orden alfabético del código (estable).
+// (FIFA 2026 invirtió el orden: el enfrentamiento directo va ANTES que la DG general.)
+function orderGroup(rows, scores) {
+  // Agrupa por puntos
+  const byPts = {};
+  for (const r of rows) (byPts[r.pts] = byPts[r.pts] || []).push(r);
+  const result = [];
+  // Puntos de mayor a menor
+  for (const pts of Object.keys(byPts).map(Number).sort((a, b) => b - a)) {
+    const tied = byPts[pts];
+    if (tied.length === 1) { result.push(tied[0]); continue; }
+    // Mini-grupo entre los empatados
+    const h2h = miniTable(tied.map(r => r.team), scores);
+    tied.sort((x, y) => {
+      const hx = h2h[x.team], hy = h2h[y.team];
+      if (hy.pts !== hx.pts) return hy.pts - hx.pts;   // h2h puntos
+      if (hy.dg !== hx.dg) return hy.dg - hx.dg;       // h2h diferencia de gol
+      if (hy.gf !== hx.gf) return hy.gf - hx.gf;       // h2h goles a favor
+      if (y.dg !== x.dg) return y.dg - x.dg;           // DG total
+      if (y.gf !== x.gf) return y.gf - x.gf;           // GF total
+      return x.team < y.team ? -1 : 1;                 // desempate determinista
+    });
+    for (const r of tied) result.push(r);
+  }
+  return result;
+}
+
+// Mini-tabla considerando SOLO los partidos entre los equipos dados.
+function miniTable(teamList, scores) {
+  const set = new Set(teamList);
+  const m = {};
+  for (const t of teamList) m[t] = { pts: 0, gf: 0, gc: 0 };
+  for (const t1 of teamList) {
+    for (const t2 of teamList) {
+      if (t1 >= t2) continue; // cada par una vez
+      const r = readMatch(t1, t2, scores);
+      if (!r) continue;
+      const { a, b } = r; // a = goles t1, b = goles t2
+      m[t1].gf += a; m[t1].gc += b;
+      m[t2].gf += b; m[t2].gc += a;
+      if (a > b) m[t1].pts += 3;
+      else if (b > a) m[t2].pts += 3;
+      else { m[t1].pts += 1; m[t2].pts += 1; }
+    }
+  }
+  for (const t of teamList) m[t].dg = m[t].gf - m[t].gc;
+  return m;
+}
+
+// Lee el marcador entre t1 y t2 buscando la clave en ambos órdenes.
+// Devuelve { a, b } con a=goles de t1, b=goles de t2, o null si no existe.
+function readMatch(t1, t2, scores) {
+  const d = scores[`${t1}-${t2}`];
+  if (d && d.a != null && d.b != null) return { a: Number(d.a), b: Number(d.b) };
+  const r = scores[`${t2}-${t1}`];
+  if (r && r.a != null && r.b != null) return { a: Number(r.b), b: Number(r.a) };
+  return null;
 }
 
 function headToHead(t1, t2, scores) {
-  const key = scores[`${t1}-${t2}`] ? `${t1}-${t2}` : `${t2}-${t1}`;
-  const s = scores[key];
-  if (!s || s.a == null || s.b == null) return 0;
-  const [first, second] = key.split('-');
-  let g1, g2; // goles de t1 y t2
-  if (first === t1) { g1 = Number(s.a); g2 = Number(s.b); }
-  else { g1 = Number(s.b); g2 = Number(s.a); }
-  if (g1 > g2) return -1; // t1 gana → t1 va antes
-  if (g2 > g1) return 1;
+  const r = readMatch(t1, t2, scores);
+  if (!r) return 0;
+  if (r.a > r.b) return -1; // gana t1 → va antes
+  if (r.b > r.a) return 1;
   return 0;
 }
 
