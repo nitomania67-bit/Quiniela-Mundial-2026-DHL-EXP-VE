@@ -137,5 +137,6 @@ function bracketComplete(picks) {
 
 module.exports = {
   R32, FEEDS, ROUNDS, ROUND_OF, ROUND_LABEL, TEAM_GROUP,
+  THIRD_SLOT_WINNER_GROUP, THIRD_SLOT_ORDER,
   buildBracket, deriveSets, bracketComplete, assignThirds,
 };
