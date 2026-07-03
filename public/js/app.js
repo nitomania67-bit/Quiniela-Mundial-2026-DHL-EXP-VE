@@ -4,7 +4,7 @@
 const S = {
   user: null, meta: null,
   pred: { scores: {}, bracketPicks: {}, submitted: 0 },
-  page: 'ranking', subtab: 'grupos', koRound: 'R32',
+  page: 'ranking', subtab: 'grupos', koRound: 'R32', resultsTab: 'grupos',
 };
 const GROUP_ORDER = ['A','B','C','D','E','F','G','H','I','J','K','L'];
 const KO_ROUND_SEQ = ['R32','R16','QF','SF','THIRD','FINAL'];
@@ -244,12 +244,16 @@ function pvGroupsHTML() {
   return html + `</div>`;
 }
 
-function pvBracketHTML() {
+// Dibuja un árbol de solo lectura (sin botones) a partir de matches+picks ya
+// resueltos. La reutilizan tanto "Ver quiniela de otro" como "Resultados
+// Oficiales" — así el HTML del árbol vive en un solo lugar (evita que si un
+// día cambiamos el diseño, haya que acordarse de tocarlo en dos sitios).
+function readonlyTreeHTML(matches, picks) {
   const B = S.meta.bracket;
-  const champ = PV.picks[104];
+  const champ = picks[104];
   const cols = SEQ.map(round => {
     const ties = B.rounds[round].map(id => {
-      const m = PV.matches[id]; const pick = PV.picks[id];
+      const m = matches[id]; const pick = picks[id];
       const seat = (team) => {
         if (!team) return `<div class="seat tbd"><span class="seat-flag">·</span><span class="seat-nm">Por definir</span></div>`;
         const sel = pick === team;
@@ -262,6 +266,10 @@ function pvBracketHTML() {
   let html = `<div class="bracket-scroll"><div class="bracket-tree">${cols}</div></div>`;
   if (champ) html += `<div class="champ-card" style="margin-top:1rem"><div class="lbl">🏆 Campeón</div><div class="team">${fl(champ)} ${esc(tn(champ))}</div></div>`;
   return html;
+}
+
+function pvBracketHTML() {
+  return readonlyTreeHTML(PV.matches, PV.picks);
 }
 
 function renderQuiniela(main) {
@@ -486,6 +494,40 @@ function clientPrune(standings, qualifiedThirds, picks) {
   return clean;
 }
 
+// ─── RESULTADOS REALES: de "conjuntos que avanzaron" a "quién ganó cada partido" ──
+// El admin no registra partido por partido; registra CONJUNTOS por ronda
+// (ej. knockout.reach8 = los 16 equipos que llegaron a octavos). Esta función
+// reconstruye, ronda por ronda, quién ganó cada llave específica: de los dos
+// equipos de un partido, el ganador es el que aparece en el conjunto de la
+// ronda siguiente. Cada ronda solo puede resolverse una vez resuelta la
+// anterior (16avos antes que octavos, etc.), así que las recorremos en ese
+// orden de dependencia — igual que un pipeline por etapas.
+function deriveRealPicks(standings, qualifiedThirds, knockout) {
+  const B = S.meta.bracket;
+  // "Quién avanzó" tras cada ronda = el conjunto que la ronda SIGUIENTE usa como entrada.
+  const advancedAfter = {
+    R32: knockout.reach8 || [],
+    R16: knockout.reach4 || [],
+    QF: knockout.reachSemi || [],
+    SF: knockout.reachFinal || [],
+    FINAL: knockout.champion ? [knockout.champion] : [],
+  };
+  const picks = {};
+  for (const round of SEQ) {
+    // Reconstruye los partidos de ESTA ronda con lo ya resuelto hasta ahora.
+    const matches = clientBuildBracket(standings, qualifiedThirds, picks);
+    const advancedSet = new Set(advancedAfter[round]);
+    for (const id of B.rounds[round]) {
+      const m = matches[id];
+      if (!m) continue;
+      if (advancedSet.has(m.team1)) picks[id] = m.team1;
+      else if (advancedSet.has(m.team2)) picks[id] = m.team2;
+      // Si ninguno está aún en el conjunto, el partido queda "por definir".
+    }
+  }
+  return picks;
+}
+
 // ─── MI CUADRO (árbol pickable) ───────────────────────────────────────────────
 let BR = { standings: null, qualifiedThirds: [], matches: {} };
 
@@ -597,10 +639,42 @@ function setSaveState(txt){ const el=document.getElementById('saveState'); if(el
 
 // ─── RESULTADOS (oficiales) ─────────────────────────────────────────────────────
 async function renderResultados(main) {
-  main.innerHTML = `<div class="page-head"><div><h1>Resultados Oficiales</h1><div class="sub">Marcadores reales de la fase de grupos</div></div></div><div id="rbody">Cargando…</div>`;
+  main.innerHTML = `<div class="page-head"><div><h1>Resultados Oficiales</h1><div class="sub">Marcadores reales del torneo</div></div></div>
+    <div class="subtabs">
+      <button class="subtab ${S.resultsTab==='grupos'?'active':''}" onclick="setResultsTab('grupos')">⚽ Grupos</button>
+      <button class="subtab ${S.resultsTab==='elim'?'active':''}" onclick="setResultsTab('elim')">🏆 Eliminatoria</button>
+    </div>
+    <div id="rbody">Cargando…</div>`;
+  renderResultsSub();
+}
+function setResultsTab(t){ S.resultsTab=t; renderResultsSub(); }
+async function renderResultsSub() {
+  const body = document.getElementById('rbody'); if (!body) return;
+  body.innerHTML = 'Cargando…';
+  if (S.resultsTab === 'elim') return renderResultsBracket(body);
   let real = { scores:{}, knockout:{} };
   try { real = await api('GET','/api/results'); } catch {}
-  renderResultsView(document.getElementById('rbody'), real.scores || {}, false);
+  renderResultsView(body, real.scores || {}, false);
+}
+
+// Cuadro real de solo lectura: pide standings+knockout reales, deriva quién
+// ganó cada partido (deriveRealPicks) y dibuja el mismo árbol que "Mi cuadro".
+async function renderResultsBracket(body) {
+  let d;
+  try { d = await api('GET', '/api/results/bracket'); }
+  catch (e) { body.innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`; return; }
+  if (!d.ready) {
+    body.innerHTML = `<div class="banner banner-info"><span class="ico">⏳</span><div>El cuadro eliminatorio se arma cuando el admin cargue los <b>72 resultados de grupos</b>.</div></div>`;
+    return;
+  }
+  const standings = { winners: {}, runners: {} };
+  for (const g of GROUP_ORDER) {
+    standings.winners[g] = d.allTables[g][0].team;
+    standings.runners[g] = d.allTables[g][1].team;
+  }
+  const picks = deriveRealPicks(standings, d.qualifiedThirds, d.knockout || {});
+  const matches = clientBuildBracket(standings, d.qualifiedThirds, picks);
+  body.innerHTML = `<div class="bracket-note">Cuadro real del torneo según los resultados que has cargado. Se actualiza solo con cada ronda que registres en Admin → Eliminatorias.</div>` + readonlyTreeHTML(matches, picks);
 }
 
 function renderResultsView(body, real, editable) {
@@ -792,4 +866,5 @@ window.resetPass=resetPass; window.unlock=unlock; window.saveResults=saveResults
 window.pick=pick;
 window.toggleKO=toggleKO; window.saveKO=saveKO;
 window.viewParticipant=viewParticipant; window.closeParticipant=closeParticipant; window.setPvTab=setPvTab;
+window.setResultsTab=setResultsTab;
 init();
