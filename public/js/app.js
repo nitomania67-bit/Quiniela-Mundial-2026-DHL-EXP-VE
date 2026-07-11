@@ -674,7 +674,7 @@ async function renderResultsBracket(body) {
   }
   const picks = deriveRealPicks(standings, d.qualifiedThirds, d.knockout || {});
   const matches = clientBuildBracket(standings, d.qualifiedThirds, picks);
-  body.innerHTML = `<div class="bracket-note">Cuadro real del torneo según los resultados que has cargado. Se actualiza solo con cada ronda que registres en Admin → Eliminatorias.</div>` + readonlyTreeHTML(matches, picks);
+  body.innerHTML = `<div class="bracket-note">Cuadro de resultados fase eliminatoria</div>` + readonlyTreeHTML(matches, picks);
 }
 
 function renderResultsView(body, real, editable) {
